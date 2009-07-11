@@ -1,0 +1,4 @@
+--- 
+socket: /tmp/localts.sock
+node_id: 1
+localspace_only: true

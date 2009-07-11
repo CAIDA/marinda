@@ -1,0 +1,189 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## A utility for showing checkpoints in the persistent state of the global
+## server.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2008, 2009 The Regents of the University of California.
+##
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program.  If not, see <http://www.gnu.org/licenses/>.
+##
+## $Id: show-checkpoints,v 1.3 2009/03/08 07:53:47 youngh Exp $
+#############################################################################
+
+require 'rubygems'
+require 'ostruct'
+require 'optparse'
+
+require 'sqlite3'
+
+$options = OpenStruct.new
+$options.root_dir = "."
+
+opts = OptionParser.new
+opts.on("--root", "=DIR",
+	"Marinda root dir (default: #{$options.root_dir})") do |v|
+  $options.root_dir = v
+end
+
+opts.on("--state-db", "=PATH",
+	"location of the state database file") do |v|
+  $options.state_db = v
+end
+
+opts.on("--id", "=NUM", Integer,
+        "show the given checkpoint (default: latest)") do |v|
+  $options.checkpoint_id = v
+end
+
+opts.on("--all", TrueClass,
+        "show all checkpoints (default: false)") do |v|
+  $options.show_all = v
+end
+
+opts.on("--list", TrueClass,
+        "list the times of all checkpoints") do |v|
+  $options.list_checkpoints = v
+end
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!
+  $stderr.puts opts
+  exit 1
+end
+
+unless $options.state_db
+  original_root = $options.root_dir
+  $options.root_dir = File.expand_path $options.root_dir
+
+  unless File.directory? $options.root_dir
+    $stderr.puts "ERROR: Marinda root directory '#{$options.root_dir}' " +
+      ($options.root_dir == original_root ? "" :
+       "(expansion of '#{original_root}') ") +
+      "doesn't exist or is not a directory"
+    exit 1
+  end
+
+  $options.state_db = $options.root_dir + "/globalserver-state.db"
+end
+
+#===========================================================================
+
+def open_state_database(path, &block)
+  unless File.exists? path
+    $stderr.printf "ERROR: missing state database file '%s'\n", path
+    exit 1
+  end
+
+  retval = SQLite3::Database.new path
+  unless retval
+    $stderr.printf "ERROR: couldn't open state database file '%s'\n", path
+    exit 1
+  end
+
+  retval.type_translation = true
+
+  if block
+    begin
+      yield retval
+    ensure
+      retval.close
+    end
+  else
+    retval
+  end
+end
+
+
+def show_checkpoint(db, checkpoint_id)
+  timestamp = db.get_first_value "SELECT timestamp FROM ChangeLog
+                                  WHERE id=?
+                                  AND operation='checkpoint'", checkpoint_id
+  unless timestamp
+    printf "ERROR: There is no checkpoint with id %d.\n", checkpoint_id
+    exit 1
+  end
+
+  puts
+  puts "#" * 70
+  printf "Checkpoint %d taken %s\n", checkpoint_id, Time.at(timestamp).to_s
+  puts "#" * 70
+  puts
+
+  %w{ Regions RegionTuples RegionTemplates Connections UnackedMessages
+      OngoingRequests }.each do |table|
+    puts
+    puts "=" * 70
+    puts table
+    puts "-" * 70
+
+    db.execute("SELECT * FROM #{table} WHERE checkpoint_id=? ",
+               checkpoint_id) do |row|
+      puts
+      p row if $options.verbose      
+      row.each_with_index do |value, index|
+        next if row.fields[index] == "checkpoint_id"
+        print row.fields[index] + ": "
+        if row.types[index] == "TEXT"
+          indent = " " * (row.fields[index].length + 2)
+          puts value.gsub(/\n/, "\n" + indent)
+        else
+          puts value.to_s
+        end
+      end
+    end
+  end
+end
+
+
+#===========================================================================
+# MAIN
+#===========================================================================
+
+open_state_database($options.state_db) do |db|
+  if $options.list_checkpoints
+    db.execute("SELECT id, timestamp FROM ChangeLog
+                WHERE operation='checkpoint'
+                ORDER BY id") do |checkpoint_id, timestamp|
+      printf "checkpoint %d taken %s\n", checkpoint_id, Time.at(timestamp).to_s
+    end
+    exit 0
+  end
+
+  if $options.show_all
+    db.execute("SELECT id FROM ChangeLog
+                WHERE operation='checkpoint'
+                ORDER BY id") do |row|
+      show_checkpoint db, row[0]
+    end
+  elsif $options.checkpoint_id
+    show_checkpoint db, $options.checkpoint_id
+  else
+    checkpoint_id = db.get_first_value "SELECT max(id) FROM ChangeLog
+                                        WHERE operation='checkpoint'"
+    if checkpoint_id
+      show_checkpoint db, checkpoint_id
+    else
+      puts "There are no checkpoints in the database."
+      exit 0
+    end
+  end
+end

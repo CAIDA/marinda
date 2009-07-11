@@ -1,0 +1,5 @@
+--- 
+socket: /tmp/localts.sock
+node_id: 1
+demux_addr: foo.example.com
+demux_port: 8742

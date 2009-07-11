@@ -1,0 +1,364 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## The global Marinda server.
+##
+## There should be just one instance of this server running in any given
+## installation of Marinda.  All local severs on remote machines connect
+## to this unique global server to access regions in the global tuple space.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2008, 2009 The Regents of the University of California.
+##
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program.  If not, see <http://www.gnu.org/licenses/>.
+##
+## $Id: marinda-gs,v 1.4 2009/03/08 08:53:08 youngh Exp $
+#############################################################################
+
+$0 = "marinda-gs"
+
+require 'rubygems'
+require 'ostruct'
+require 'optparse'
+require 'thread'
+require 'syslog'
+require 'yaml'
+
+require 'marinda/utils'
+require 'marinda/globaldemux'
+require 'marinda/connection'
+
+Thread.abort_on_exception = true
+
+$options = OpenStruct.new
+$options.root_dir = "."
+$options.use_lock_file = true
+
+opts = OptionParser.new
+opts.on("--root", "=DIR",
+	"Marinda root dir (#{$options.root_dir})") do |v|
+  $options.root_dir = v
+end
+
+opts.on("-d", "--[no-]detach", TrueClass,
+	"run as detached (daemon) process") do |v|
+  $options.detach = v
+end
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!
+  $stderr.puts opts
+  exit 1
+end
+
+#===========================================================================
+
+original_root = $options.root_dir
+$options.root_dir = File.expand_path $options.root_dir
+
+unless File.directory? $options.root_dir
+  $stderr.puts "ERROR: Marinda root directory '#{$options.root_dir}' " +
+    ($options.root_dir == original_root ? "" :
+     "(expansion of '#{original_root}') ") +
+    "doesn't exist or is not a directory"
+  exit 1
+end
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+$options.state_db = $options.root_dir + "/globalserver-state.db"
+$options.config_path = $options.root_dir + "/global-config.yaml"
+$options.lock_file = $options.root_dir + "/globalserver.LOCK"
+
+#===========================================================================
+
+syslog_options = Syslog::LOG_PID
+syslog_options |= Syslog::LOG_PERROR unless $options.detach
+$log = Syslog.open("marinda-gs", syslog_options, Syslog::LOG_LOCAL1)
+Syslog.mask = Syslog::LOG_UPTO(Syslog::LOG_DEBUG) if $options.verbose
+
+Signal.trap("USR1") do
+  $log.info "got SIGUSR1; will checkpoint state at next opportunity"
+  $checkpoint_state = true
+end
+
+Signal.trap("TERM") do
+  $log.info "got SIGTERM; will checkpoint state and exit at next opportunity"
+  $checkpoint_state_and_exit = true
+end
+
+Signal.trap("INT")  do
+  $log.info "got SIGINT; will checkpoint state and exit at next opportunity"
+  $checkpoint_state_and_exit = true
+end
+
+Signal.trap("HUP") do
+  $log.info "got SIGHUP; will reload config at next opportunity"
+  $reload_config = true
+end
+
+#===========================================================================
+
+class GlobalConfig
+
+  class MalformedConfigException < RuntimeError; end
+
+  attr_reader :server_port, :nodes, :use_ssl, :check_client_name, :cert, :key
+  attr_reader :ca_file, :ca_path
+
+  # Can raise MalformedConfigException and YAML exceptions.
+  def initialize(path)
+    config = YAML.load_file path
+    $log.debug "%p", config if $options.verbose
+
+    import_required config, "server_port", Integer
+    import_nodes config
+
+    import_optional config, "use_ssl", TrueClass
+    if @use_ssl
+      import_required config, "check_client_name", TrueClass
+      import_required config, "cert", String, true
+      import_required config, "key", String, true
+      import_optional config, "ca_file", String, true
+      import_optional config, "ca_path", String, true
+
+      unless @ca_file || @ca_path
+        raise MalformedConfigException, "need either ca_file or ca_path"
+      end
+    end
+
+    # select processing in GlobalSpaceDemux
+    import_optional config, "debug_io_select", TrueClass
+
+    # read_data and write_data in GlobalSpaceDemux
+    import_optional config, "debug_io_bytes", TrueClass
+
+    # process_mux_message in GlobalSpaceDemux
+    import_optional config, "debug_io_messages", TrueClass
+
+    # command/request handling in GlobalSpaceDemux
+    import_optional config, "debug_commands", TrueClass
+  end
+
+
+  def export_debugging_flags
+    $debug_io_select = @debug_io_select
+    $debug_io_bytes = @debug_io_bytes
+    $debug_io_messages = @debug_io_messages
+    $debug_commands = @debug_commands
+  end
+
+
+  private #----------------------------------------------------------------
+
+  def import_required(config, key, type, expand_path=false)
+    import_scalar config, key, type, true, expand_path
+  end
+
+  def import_optional(config, key, type, expand_path=false)
+    import_scalar config, key, type, false, expand_path
+  end
+
+  def import_scalar(config, key, type, required=true, expand_path=false)
+    if type == TrueClass || type == FalseClass
+      types = [ TrueClass, FalseClass ]
+    else
+      types = [ type ]
+    end
+
+    if config[key] != nil  # if config has the key and the value isn't empty
+      value = config[key]
+      if types.any? { |t| value.kind_of? t }
+        if expand_path && value !~ /^\s*\//
+          value = File.dirname($options.config_path) + "/" + value 
+        end
+        instance_variable_set "@#{key}", value
+      else
+        raise MalformedConfigException, "'#{key}' has the wrong type: " +
+          value.class.name + " instead of " + type.name
+      end
+    else
+      if required
+        raise MalformedConfigException, "missing required config item '#{key}'"
+      end
+    end
+  end
+
+
+  def import_nodes(config)
+    key = "nodes"
+    if config[key] != nil  # if config has the key and the value isn't empty
+      if config[key].instance_of? Hash
+        if config[key].all? { |k,v| k.instance_of?(String) &&
+                                    v.kind_of?(Integer) }
+          validate_node_map config[key]
+          @nodes = config[key]
+        else
+          raise MalformedConfigException, "invalid 'nodes' mapping: " +
+            "wrong entry type: mappings must be from IP address to node ID"
+        end
+      else
+        raise MalformedConfigException, "invalid 'nodes' mapping: config " +
+          "item has the wrong YAML type: " + config[key].class.name +
+          " instead of Hash"
+      end
+    else
+      raise MalformedConfigException, "missing required config item 'nodes'"
+    end
+
+    $log.info "begin node map"
+    @nodes.sort {|a, b| a[1] <=> b[1]}.each do |address, node_id|
+      $log.info "%3d => %p", node_id, address
+    end
+    $log.info "end node map"
+  end
+
+
+  def validate_node_map(mappings)
+    seen_node_id = {}    # node_id => true
+    mappings.each do |address, node_id|
+      unless address =~ /^\d+\.\d+\.\d+\.\d+$/
+        raise MalformedConfigException, "invalid 'nodes' mapping: '" +
+          address + "' is not an IP address"
+      end
+
+      if node_id <= 0 || node_id > 2**15
+        raise MalformedConfigException, "invalid 'nodes' mapping: node_id " +
+          "must be >= 1 and <= " + (2**15).to_s
+      end
+
+      if seen_node_id[node_id]
+        raise MalformedConfigException, "invalid 'nodes' mapping: node_id " +
+          node_id.to_s + " appears more than once"
+      end
+      seen_node_id[node_id] = true
+    end
+  end
+
+end
+
+
+def log_exception(exn)
+  msg = exn.class.name + ": " + exn.to_s
+  $log.err "ERROR: aborting on exception: %s; backtrace: %s", msg,
+    exn.backtrace.join(" <= ")
+  msg
+end
+
+
+def log_failure(msg)
+  path = $options.root_dir + "/marinda-gs-failed.#{Time.now.to_i}.#{$$}"
+  File.open(path, "w") do |file|
+    file.puts msg
+  end
+end
+
+
+#===========================================================================
+# MAIN
+#===========================================================================
+
+TIMEOUT = 5 # seconds
+
+if $options.use_lock_file
+  $lock_handle = Marinda.obtain_exclusive_lock $options.lock_file
+  unless $lock_handle
+    abort "ERROR: couldn't obtain lock on '#{$options.lock_file}'"
+  end
+end
+
+config = GlobalConfig.new $options.config_path
+config.export_debugging_flags()
+$log.debug "%p", config if $options.verbose
+
+# We intentionally set up the connection just once, at initial start up.
+# We never reset the connection on subsequent requests to re-read the config,
+# since an error in the connection config could screw things up.  If the
+# user really wants to change the connection settings, then he can simply
+# restart the global server.
+if config.use_ssl
+  connection = Marinda::ServerSSLConnection.new config.server_port,
+    config.cert, config.key, config.ca_file, config.ca_path,
+    config.check_client_name
+else
+  connection = Marinda::InsecureServerConnection.new config.server_port
+end
+
+# We must detach before starting up GlobalSpaceDemux, since detaching kills
+# all non-main threads due to the use of fork().  Detach after creating
+# the server socket to make it easier for the user to detect a connection
+# setup problem.
+if $options.detach
+  $stderr.puts "starting marinda-gs in background\n"
+  Marinda::daemonize()
+  $log.info "started marinda-gs in background"
+end
+
+begin
+  demux = Marinda::GlobalSpaceDemux.new $options.state_db
+  $log.info "waiting for clients on port %d", config.server_port
+
+  read_set = [ connection.sock ]
+  loop do
+    readable = select read_set, nil, nil, TIMEOUT
+
+    if $checkpoint_state
+      $checkpoint_state = false
+      $log.info "checkpointing state on SIGUSR1."
+      demux.checkpoint_state()
+    end
+
+    if $checkpoint_state_and_exit
+      $checkpoint_state_and_exit = false
+      $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
+      demux.checkpoint_state_and_exit()
+      # XXX it would be nice to unlock and delete the lock file
+    end
+
+    if $reload_config
+      $reload_config = false
+      $log.info "reloading config file on SIGHUP."
+      begin
+        config = GlobalConfig.new $options.config_path
+        config.export_debugging_flags()
+        $log.debug "%p", config if $options.verbose
+      rescue # GlobalConfig::MalformedConfigException & YAML exceptions
+        log_exception $!
+      end
+    end
+
+    if readable
+      client_sock, node_id = connection.accept_with_whitelist config.nodes
+      next unless client_sock
+      demux.connection_opened node_id, client_sock
+    end
+  end
+
+rescue
+  short_msg = $!.class.name + ": " + $!.to_s
+  msg = sprintf "marinda-gs: exiting on uncaught exception " +
+    "at top-level: %p; backtrace: %s", $!, $!.backtrace.join(" <= ")
+  $log.err "%s", msg
+  log_failure msg rescue nil
+  if $options.use_lock_file
+    Marinda.release_exclusive_lock $lock_handle rescue nil
+  end
+  exit 1
+end

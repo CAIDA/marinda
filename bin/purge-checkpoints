@@ -1,0 +1,172 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## A utility for purging all but the latest checkpoint in the persistent state
+## of the global server.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2008, 2009 The Regents of the University of California.
+##
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program.  If not, see <http://www.gnu.org/licenses/>.
+##
+## $Id: purge-checkpoints,v 1.4 2009/03/08 07:54:05 youngh Exp $
+#############################################################################
+
+require 'rubygems'
+require 'ostruct'
+require 'optparse'
+
+require 'sqlite3'
+
+$options = OpenStruct.new
+$options.root_dir = "."
+
+opts = OptionParser.new
+opts.on("--root", "=DIR",
+	"Marinda root dir (default: #{$options.root_dir})") do |v|
+  $options.root_dir = v
+end
+
+opts.on("--state-db", "=PATH",
+	"location of the state database file") do |v|
+  $options.state_db = v
+end
+
+opts.on("--all", TrueClass,
+        "purge all checkpoints, including the latest") do |v|
+  $options.purge_all = v
+end
+
+opts.on("-t", "--[no-]test-only", TrueClass,
+        "only show what would be done") do |v|
+  $options.test_only = v
+end
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!
+  $stderr.puts opts
+  exit 1
+end
+
+unless $options.state_db
+  original_root = $options.root_dir
+  $options.root_dir = File.expand_path $options.root_dir
+
+  unless File.directory? $options.root_dir
+    $stderr.puts "ERROR: Marinda root directory '#{$options.root_dir}' " +
+      ($options.root_dir == original_root ? "" :
+       "(expansion of '#{original_root}') ") +
+      "doesn't exist or is not a directory"
+    exit 1
+  end
+
+  $options.state_db = $options.root_dir + "/globalserver-state.db"
+end
+
+#===========================================================================
+
+def open_state_database(path, &block)
+  unless File.exists? path
+    $stderr.printf "ERROR: missing state database file '%s'\n", path
+    exit 1
+  end
+
+  retval = SQLite3::Database.new path
+  unless retval
+    $stderr.printf "ERROR: couldn't open state database file '%s'\n", path
+    exit 1
+  end
+
+  retval.type_translation = true
+
+  if block
+    begin
+      yield retval
+    ensure
+      retval.close
+    end
+  else
+    retval
+  end
+end
+
+
+def banner(text)
+  puts
+  puts "=" * 70
+  puts text
+  puts "-" * 70
+end
+
+
+#===========================================================================
+# MAIN
+#===========================================================================
+
+tables = %w{ Regions RegionTuples RegionTemplates Connections UnackedMessages
+             OngoingRequests }
+
+open_state_database($options.state_db) do |db|
+  db.transaction do |txn|
+    if $options.purge_all
+      puts "Purging all checkpoints ..."
+      tables.each do |table|
+        banner table
+        if $options.verbose || $options.test_only
+          txn.execute("SELECT * FROM #{table}") do |row|
+            p row
+          end
+        end
+
+        unless $options.test_only
+          txn.execute "DELETE FROM #{table}"
+          printf "Deleted %d record(s) from %s.\n", txn.changes, table
+        end
+      end
+    else
+      checkpoint_id, timestamp =
+        txn.get_first_row "SELECT id,timestamp FROM ChangeLog
+                           WHERE id IN (SELECT max(id) FROM ChangeLog
+                                        WHERE operation='checkpoint');"
+      if checkpoint_id
+        printf "Purging all checkpoints before id %d taken %s ...\n",
+          checkpoint_id, Time.at(timestamp).to_s
+
+        tables.each do |table|
+          banner table
+          if $options.verbose || $options.test_only
+            txn.execute("SELECT * FROM #{table} WHERE checkpoint_id < ? ",
+                        checkpoint_id) do |row|
+              p row
+            end
+          end
+
+          unless $options.test_only
+            txn.execute "DELETE FROM #{table} WHERE checkpoint_id < ? ",
+              checkpoint_id
+            printf "Deleted %d record(s) from %s.\n", txn.changes, table
+          end
+        end
+      else
+        puts "There are no checkpoints in the database."
+      end
+    end
+  end
+end

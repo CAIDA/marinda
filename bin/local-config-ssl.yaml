@@ -1,0 +1,10 @@
+--- 
+socket: /tmp/localts.sock
+node_id: 1
+demux_addr: foo-server.example.com
+demux_port: 8742
+use_ssl: true
+cert: bar-client-cert.pem
+key: bar-client-key.INSECURE.pem
+ca_file: my-cacert.pem
+#ca_path: hashedCA

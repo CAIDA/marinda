@@ -1,0 +1,12 @@
+--- 
+server_port: 8742
+use_ssl: true
+check_client_name: true
+cert: foo-server-cert.pem
+key: foo-server-key.INSECURE.pem
+ca_file: my-cacert.pem
+#ca_path: hashedCA
+nodes:
+  10.0.2.3: 1
+  10.0.2.4: 2
+  10.0.2.5: 3

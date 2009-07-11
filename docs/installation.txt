@@ -1,0 +1,516 @@
+Installation Guide
+==================
+_ _
+$Id: installation.txt,v 1.13 2009/03/09 05:36:14 youngh Exp $
+
+== Overview
+
+How you install Marinda depends on how you intend to use it.  For the
+purposes of installation and configuration, the most important
+question is, "On how many different machines do I want to run clients
+that need to communicate with each other?"  This question is important
+because the Marinda system architecture consists of and distinguishes
+between _global_ and _local_ tuple spaces.
+
+* If all your clients will run on a *single* machine (that is, if all
+  communication will happen *within* a single machine), then you can
+  simply install Marinda (the _local_ tuple space) on that one host,
+  and you're done.
+* If your clients will run on *multiple* machines (that is, if you need
+  to support communication *across* machines), then you need to install
+  Marinda on each client machine (for the _local_ tuple space) and on
+  a server machine (for the _global_ tuple space).  You don't have to
+  dedicate a separate machine to run the global tuple space--you can
+  simply reuse one of the machines hosting clients, if you wish.
+
+This architecture is different than for web servers, for example,
+where there is a significant difference in software installation
+for the server machine (Apache) and the client machine (Firefox).
+
+Marinda is distributed as a RubyGem.  The same gem is used to install
+both the global and local tuple spaces.  Because all clients must run
+on a machine that has a running local tuple space, this same gem also
+provides the Ruby client binding.
+
+Marinda is known to work on various Unix systems (MacOS X, Linux,
+FreeBSD), but it will not work on systems like Windows that lack Unix
+domain sockets (for the same reason, it will not yet work with JRuby).
+It works with Ruby 1.8.5 and 1.8.6, and seems to work with Ruby 1.8.7.
+It will probably not work with Ruby 1.9 without tweaks, so avoid Ruby
+1.9 for now.
+
+WARNING: Ruby 1.8.5 and 1.8.6 seem to have bugs that can bring down
+long-running global tuple-space processes (after a few months).  It may
+be best to use Ruby 1.8.7 with the highest patchlevel you can find.
+Additionally, Ruby 1.8.x releases suffer from memory leaks.  If process
+size becomes a problem, you should apply
+http://sites.google.com/site/brentsrubypatches/[Brent Roman's MBARI
+patches] to the Ruby 1.8.7 interpreter.
+
+
+== Required Packages
+
+Marinda needs two external packages, the
+http://www.sqlite.org/[SQLite] database and the Ruby binding to
+SQLite.
+
+NOTE: Be sure to use SQLite v3.x, not the older v2 series.
+
+Here are some platform-specific directions for installing SQLite:
+
+* MacOS X using http://www.macports.org/[MacPorts]
++
+----
+$ sudo port install sqlite3
+----
+
+* Linux (Ubuntu)
++
+----
+$ sudo apt-get install libsqlite3-0
+$ sudo apt-get install libsqlite3-dev
+----
+
+The Ruby binding to the SQLite database is called
+https://rubyforge.org/projects/sqlite-ruby/[`sqlite3-ruby`].  The
+easiest way to install `sqlite3-ruby` is with the following command,
+which will automatically fetch the gem from RubyForge (you must have
+installed SQLite first):
+
+----
+$ sudo gem install sqlite3-ruby
+----
+
+If you get an error saying that `gem` is not a command, then you need to
+http://www.rubygems.org/read/chapter/3[install RubyGems].
+
+Finally, Marinda needs the `openssl` and `yaml` modules in the Ruby
+standard library.  Most Ruby deployments should have these already
+installed, but some don't, so it's worth checking in the following
+way:
+
+----
+$ ruby -ropenssl -e 'puts "ok"'
+----
+
+You should see `ok` if `openssl` is installed.  Otherwise, you'll see
+
+----
+$ ruby -ropenssl -e 'puts "ok"'
+ruby: no such file to load -- openssl (LoadError)
+----
+
+(Use `-ryaml` to test for the `yaml` module.)
+
+
+== Installation
+
+To install Marinda on both server and client machines, simply execute
+the following commands (substituting the actual version number of the
+Marinda package you've downloaded):
+
+----
+$ tar xvzf marinda-0.8.0.tar.gz
+$ cd marinda-0.8.0
+$ sudo gem install marinda-0.8.0.gem
+----
+
+This also installs the Ruby client bindings.
+
+[NOTE]
+====
+If you're upgrading Marinda, then be sure to first uninstall any
+previous version with
+----
+$ sudo gem uninstall marinda
+----
+You can check whether an older Marinda is installed with
+----
+$ gem list
+----
+====
+
+
+== Configuration
+
+As mentioned in the overview, there are _global_ and _local_ tuple
+spaces in Marinda.  The global tuple space is optional and only
+needed if your clients need to communicate from multiple machines.
+The following sections describe how to configure the global and
+local tuple spaces for several deployment scenarios.
+
+TIP: If you want to start playing with Marinda as quickly as possible,
+     then skip ahead to the xref:starting-servers[Starting Servers]
+     section, since the Marinda distribution package comes
+     pre-configured for the _local tuple space only_ mode of use.
+
+You configure the global and local tuple-space servers with two
+http://www.yaml.org/[YAML] files (YAML is a structured text file
+similar to XML but easier to read and write) named
+`global-config.yaml` and `local-config.yaml`.  These files should
+normally be placed inside the `marinda-0.8.0` directory created when
+you unpacked the Marinda distribution package, but you can put them
+somewhere else, if you'd like (see the section on starting up servers
+in this document).
+
+Please read through Scenario 1 below, even if a different scenario
+applies to you, because Scenario 1 discusses some common elements.
+
+=== Scenario 1: Local tuple space only
+
+Choose this configuration if all your clients will run on a *single*
+machine.  You only need to configure and start the local tuple-space
+server.
+
+TIP: The Marinda distribution contains a sample `local-config.yaml`
+     with this configuration, so there's nothing more you need to do.
+
+.`local-config.yaml`
+----
+--- 
+socket: /tmp/localts.sock
+node_id: 1
+localspace_only: true
+----
+
+The `socket` line specifies the rendezvous path for a Unix domain
+socket.  Local Marinda clients will open this socket to connect
+to the local tuple space.  The socket does not have to be in
+`/tmp`, but it needs to be in a location that is accessible to
+all clients.  (You should keep the path relatively short, since
+many operating systems impose a restrictive limit, around 100
+characters.)
+
+[NOTE]
+====
+Access control to the local tuple space is determined *solely* by the
+standard Unix permissions set on this socket file.  By default, the
+socket is owned by the user who starts the local tuple space and has
+permissions `rwxr-xr-x`.  If you need to grant access to other users,
+then one approach is to create a common group for these users and open
+up the group permissions to `rwxrwxr-x`.  A simpler but less secure
+way of granting access to other users is to set the permissions to
+`rwxrwxrwx`.
+
+The Unix permissions of this socket also determine access to the
+global tuple space, since the local tuple space acts as a proxy for
+the global tuple space.
+====
+
+The `node_id` line specifies an arbitrary node ID chosen by you for
+this client machine.  The node ID must be in the range 1 to 2^15^,
+inclusive (that is, valid node IDs are 1, 2, ... , 32768).  Each
+client machine that connects to a given global tuple-space server must
+have a unique node ID.
+
+=== Scenario 2: Global and local tuple spaces with basic security
+
+Choose this configuration if your clients will run on *multiple* machines.
+The global tuple-space server will only accept connections from a
+configured set of client machine IP addresses.  However, the
+communication between the global server and the local servers running
+on client machines will be unencrypted and therefore susceptible to
+eavesdropping.  If all traffic between server and client machines
+stays within your organization, then this level of security is
+probably good enough.  However, if server and client machines
+communicate over the global Internet, then you may wish to look at
+Scenario 3 for stronger authentication, privacy, and traffic
+integrity.
+
+TIP: The Marinda distribution contains a sample `global-config.yaml`
+     with this configuration as a starting point (it is also available
+     as `global-config-nossl.yaml`).  Simply edit it as needed.
+
+.`global-config.yaml`
+----
+--- 
+server_port: 8742
+nodes:
+  10.0.2.3: 1
+  10.0.2.4: 2
+  10.0.2.5: 3
+----
+
+This configures the global server to listen on TCP port 8742 (which is
+not reserved for any application--see
+http://www.iana.org/assignments/port-numbers[IANA port assignments])
+for incoming connections from the local tuple-space servers running on
+remote client machines.
+
+The `nodes` config lines specify the allowed client machine IP addresses
+and their corresponding node IDs.  In the above example, node 1 has
+IP address `10.0.2.3`, node 2 has IP address `10.0.2.4`, and so on.
+
+NOTE: Be careful to indent all _<IP-address>: <node-ID>_ lines in
+      `global-config.yaml` with the exact same amount of whitespace.
+      YAML uses the indentation to determine nesting.  Also, be
+      careful that you don't repeat an IP address, since YAML may not
+      warn you about it (and the global server has no way to detect
+      it).  However, the global server will detect and warn you about
+      duplicate node IDs, if they are used for different IP addresses,
+      and malformed IP addresses.
+
+.`local-config.yaml`
+----
+--- 
+socket: /tmp/localts.sock
+node_id: 1
+demux_addr: foo.example.com
+demux_port: 8742
+----
+
+TIP: The sample `local-config-nossl.yaml` contains the above config,
+     so you can copy it to `local-config.yaml` and edit it as needed.
+
+The `demux_addr` line specifies the hostname or IP address of the
+global tuple-space server, and `demux_port` specifies the global
+server's listening port (that is, the `server_port` value in
+`global-config.yaml`).
+
+=== Scenario 3: Global and local tuple spaces with SSL
+
+Choose this configuration if your clients will run on multiple machines and
+you need to encrypt the traffic between the server and clients.  This
+configuration also ensures the highest level of authentication between
+the server and clients.  Servers will check client certificates, and
+clients will check the server certificate.
+
+You will need to create server and client SSL certificates using a
+*self-signed* Certificate-Authority certificate (a _CA cert_) you
+create yourself.  For security, this self-signed CA cert should be the
+*only* recognized and trusted CA cert in the system.
+
+WARNING: Don't obtain server and client SSL certificates from an
+         established certificate authority like VeriSign.  If you do,
+         then an adversary could obtain certificates in the same way
+         and potentially become rogue nodes in the system (if they
+	 can become a man-in-the-middle or if they can poison DNS).
+
+The client certificate should have the IP address of the client
+machine in the _Common Name_ field.  The server certificate should
+have the fully-qualified domain name of the server machine in the
+_Common Name_ field.  You need to follow these conventions for the
+post-connection certificate validations to succeed.
+
+.`global-config.yaml`
+----
+--- 
+server_port: 8742
+use_ssl: true
+check_client_name: true
+cert: foo-server-cert.pem
+key: foo-server-key.INSECURE.pem
+ca_file: my-cacert.pem
+#ca_path: hashedCA
+nodes:
+  10.0.2.3: 1
+  10.0.2.4: 2
+  10.0.2.5: 3
+----
+
+TIP: The sample `global-config-ssl.yaml` contains the above config,
+     so you can copy it to `global-config.yaml` and edit it as needed.
+
+The `check_client_name` line specifies whether the server should check
+the client's IP address against the IP address stored in the _Common
+Name_ field of the client's certificate.  If this line is missing, or
+if the value is `false`, then the server only checks that the client's
+certificate is valid and signed by the trusted CA cert.
+
+The `cert` line specifies the path to the server's certificate in the
+PEM format.  Other certificate formats may be supported (see the
+`openssl` documentation).
+
+The `key` line specifies the path to the private key for the server's
+certificate.  This key file must not be password protected (which
+explains the "INSECURE" substring in the filename, a convention).  The
+recommended permissions for this file is `rwx------`.  There is no
+support yet for interactively entering the password for the key file.
+
+The `ca_file` line specifies the path to the CA cert.  This CA cert
+will be the only trusted CA cert in the system.  If you need to
+support multiple CA certs for some reason, then store them in a
+directory with special hashed names and provide the directory path
+with a `ca_path` line (see the `openssl` documentation).  In the above
+sample `global-config.yaml`, the `ca_path` line has been commented
+out, since a `ca_file` line is provided.
+
+.`local-config.yaml`
+----
+--- 
+socket: /tmp/localts.sock
+node_id: 1
+demux_addr: foo-server.example.com
+demux_port: 8742
+use_ssl: true
+cert: bar-client-cert.pem
+key: bar-client-key.INSECURE.pem
+ca_file: my-cacert.pem
+#ca_path: hashedCA
+----
+
+TIP: The sample `local-config-ssl.yaml` contains the above config,
+     so you can copy it to `local-config.yaml` and edit it as needed.
+
+If the local tuple-space server is configured to use SSL, then it will
+always check that the fully-qualified domain name of the server
+matches the _Common Name_ field of the server's certificate.  There is
+no configuration option to disable this check.
+
+NOTE: The local server may perform a reverse lookup of the server's
+      IP address to find the fully-qualified domain name of the
+      server--that is, it doesn't just use the value of the
+      `demux_addr` line for certificate validation.  Be sure to check
+      that there is a correct, working entry in the reverse DNS zone
+      for the server.
+
+
+== Firewall Configuration
+
+If your organization uses firewalls, then you'll need to allow
+incoming TCP connections to port 8742 (the value of `server_port` in
+`global-config.yaml`) on the machine hosting the global server.  The
+global server is the only component of a Marinda deployment that
+listens on a TCP port.  In particular, the local servers only open
+*outgoing* connections (to the global server), so no special firewall
+rules are needed for them.
+
+
+== Syslog Configuration
+
+The global and local servers use syslog for logging.  The global
+server logs to the `local1` facility, and the local server to the
+`local0` facility.  Both servers are somewhat chatty and continually
+write diagnostic messages at the `debug` level and higher by default.
+
+Here is how syslog is configured by default on the following
+platforms:
+
+MacOS X:: The default syslog configuration logs all Marinda messages:
+          `local0` goes to `/var/log/appfirewall.log`, and `local1` to
+          `/var/log/ipfw.log`.  Marinda error messages will show up in
+          `/var/log/system.log`.
+Linux (Ubuntu):: The default syslog configuration logs all Marinda
+          messages.  Both `local0` and `local1` go to
+          `/var/log/syslog`.
+FreeBSD:: Some configuration changes are needed to see all Marinda
+          messages (such as `local0` messages and `debug` level
+          messages).  Please see the FreeBSD syslog documentation.
+
+You can enable even greater debug logging with a variety of
+configuration options for both the global and local servers.
+
+.`global-config.yaml`
+----
+# ...
+
+debug_commands: true
+debug_io_messages: true
+debug_io_select: true
+debug_io_bytes: true
+----
+
+The above options control the logging of the interaction between the
+global and local servers.
+
+.`local-config.yaml`
+----
+# ...
+
+debug_client_commands = true
+debug_client_io_select = true
+debug_client_io_bytes = true
+
+debug_mux_commands = true
+debug_mux_io_messages = true
+debug_mux_io_select = true
+debug_mux_io_bytes = true
+----
+
+The `debug_client` options control the logging of the interaction
+between the local server and client programs.  The `debug_mux` options
+control the logging of the interaction between the local and global
+servers.
+
+NOTE: The volume of syslog messages can be quite high with the above
+      debugging options, which might cause a problem if there is
+      limited disk space or if syslog messages are forwarded to remote
+      hosts.
+
+[[starting-servers]]
+== Starting Servers
+
+The easiest way to start up the global and local servers is directly
+from the `marinda-0.8.0` directory created when you unpacked the
+Marinda distribution package.
+
+If you configured Marinda for _local tuple space only_, then all you
+have to do is execute:
+
+----
+$ ./marinda-ls -d
+starting marinda-ls in background
+----
+
+You can read on if you're interested in learning more about this
+process.  Otherwise, you should read the
+link:client-programming.html[Client Programming Guide] to learn how to
+use Marinda.
+
+For all other Marinda configurations, you will need to start up the
+global server and then all the local servers.
+
+The process for starting up the global server is just as simple as for
+the local server.  Go to the machine where you want to run the global
+server and then execute the following command from the `marinda-0.8.0`
+directory:
+
+----
+$ ./marinda-gs -d
+starting marinda-gs in background
+----
+
+You will see the following new files in the `marinda-0.8.0` directory:
+
+* `globalserver-state.db`: an SQLite database containing the persistent state
+   of the global server, including user-triggered checkpoints of the contents
+   of the tuple space, and
+* `globalserver.LOCK`: a lock file to prevent multiple global servers from
+   running concurrently.
+
+Now go to each client machine and start up the local server with
+the command: `./marinda-ls -d`.
+
+That's all there is to it.
+
+****
+.Adding new client nodes
+
+If you deploy a new client machine (that is, a machine running a local
+server) at some later point, add the IP address and node ID to
+`global-config.yaml` and then tell the global server to reload its
+config with SIGHUP; that is, if the process ID of the global server is
+1234, then execute:
+
+----
+$ kill -HUP 1234
+----
+****
+
+****
+.Local server startup error: 'Address already in use'
+
+You may come across the following error while starting up the local
+server:
+
+----
+./marinda-ls:279:in `initialize': Address already in use -
+		     /tmp/localts.sock (Errno::EADDRINUSE)
+----
+
+This simply means that the `/tmp/localts.sock` socket file already
+exists.  This file may exist if `marinda-ls` previously crashed
+(`marinda-ls` will delete the file on normal exit).  If you're certain
+that there is no other local server process running, then delete
+`/tmp/localts.sock` and re-execute `marinda-ls`.
+****

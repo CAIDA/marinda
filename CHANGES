@@ -1,0 +1,44 @@
+version 0.8.1, 2009-xx-xx
+  * slight clean up of code
+
+version 0.8.0, 2009-03-16
+  * added documentation: Installation and Client Programming Guides
+    (the latter isn't complete)
+  * marinda-gs & marinda-ls: added more validation of config values,
+    implemented use of lock files, improved error reporting, and made
+    other general improvements
+  * added license text to source files in preparation for public release
+
+version 0.7.3, 2009-02-27
+  * marinda-gs: fixed to catch Errno::EINVAL when accepting connections from
+    clients
+
+version 0.7.2, 2009-02-02
+  * marinda-gs & marinda-ls: fixed to catch OpenSSL::SSL::SSLError exception
+
+version 0.7.1, 2008-10-15
+  * marinda-ls: changed to unlink the server socket file on SIGTERM and SIGINT
+  * marinda-ls: implemented daemonizing with -d option
+  * marinda-ls: improved catching and reporting of exceptions
+  * added logging to files of uncaught exceptions that reach the top execution
+    level of threads
+  * fixed some debugging messages
+
+version 0.7.0, 2008-08-01
+  * implemented checkpointing and restore in global tuple space
+  * changed mux-demux protocol (now v2) to exchange node ID and session ID;
+    this allows both the local and global servers to properly handle failure
+    of either end
+  * implemented real scripts for starting up the local and global servers,
+    with much better checking of config files
+  * made numerous other improvements: cleaned up code, changed to use syslog,
+    fixed bugs, etc.
+
+version 0.6.4, 2008-03-11
+  * changed TemplateBag to provide newly written tuples to all suitable
+    blocked *read* requests before providing tuples to blocked take requests;
+    previously, take requests took precedence, and it was impossible to write
+    a program that monitored all tuples (for logging purposes, for example)
+
+version 0.6.3, 2007-09-12
+....

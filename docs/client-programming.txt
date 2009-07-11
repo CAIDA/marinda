@@ -1,0 +1,872 @@
+Client Programming Guide
+========================
+_ _
+$Id: client-programming.txt,v 1.15 2009/03/17 03:11:48 youngh Exp $
+
+== Overview
+
+This is a tutorial on writing Ruby programs that use Marinda (if you
+haven't installed Marinda, then see the
+link:installation.html[Installation Guide]).  This tutorial covers
+progressively more advanced topics by building upon earlier examples.
+We recommend you read this tutorial step by step from beginning to
+end, working through the examples yourself with your own Marinda
+setup.  In addition to explanations of supported Marinda operations,
+you'll find tips and discussions of important overarching concepts, so
+even if you already know how some operations work (perhaps you've had
+some exposure to tuple spaces before), you'll find it beneficial to
+read through the text rather than skipping around.
+
+
+== Minimal client program
+
+The following code shows the minimal Marinda client program:
+
+[source, ruby]
+----
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'marinda'
+
+$ts = Marinda::Client.new(UNIXSocket.open("/tmp/localts.sock"))
+$ts.hello
+----
+
+The `$ts` variable now holds an open connection to the local tuple
+space.  The line `$ts.hello` actually establishes the connection.
+
+For brevity, we will omit this setup code in the code listings of
+this tutorial.
+
+
+== Basic operations: `read`, `write`, `take`
+
+A tuple space is a distributed shared memory.  It holds _tuples_,
+which are essentially vectors or arrays of values.  A tuple can be of
+any length (including zero), and it can hold a mixture of string,
+integer, and float values.  A tuple space is a _multiset_--it is legal
+to have multiple instances of the same tuple (that is, two different
+tuples with the same length and the same values in the corresponding
+positions).
+
+In fact, in the Ruby binding to Marinda, tuples are simply Ruby
+arrays.  For example, the following Ruby array literals are all valid
+Marinda tuples:
+
+[source, ruby]
+----
+[1, 2, 3]
+["foo", 2, "bar", 3.14159]
+[42]
+----
+
+The most fundamental Marinda operation is `write`.  For example, we
+can store the above tuples into the tuple space with the following
+code:
+
+[source, ruby]
+----
+$ts.write [1, 2, 3]
+$ts.write ["foo", 2, "bar", 3.14159]
+$ts.write [42]
+----
+
+[TIP]
+====
+The best way to follow along with this tutorial is to interactively
+evaluate expressions in Ruby with `irb`, the interactive Ruby
+interpreter (which is available as a standard part of Ruby
+installations).
+
+To make it even easier, we've provided the standard Marinda client
+setup code (as discussed in the previous section) in the file
+link:tut.rb[`tut.rb`], which you can load up in `irb` as follows (the
+`irb` prompt string is `>>`):
+
+[source, ruby]
+----
+$ cd marinda-0.8.0/docs
+$ irb --prompt-mode simple
+>> load 'tut.rb'
+=> true
+>> $ts.write [1, 2, 3]
+=> true
+>> $ts.write ["foo", 2, "bar", 3.14159]
+=> true
+>> $ts.write [42]
+=> true
+----
+
+We also provide two helpful methods in `tut.rb`:
+
+[source, ruby]
+----
+>> dump $ts
+[1, 2, 3]
+["foo", 2, "bar", 3.14159]
+[42]
+=> nil
+>> clear $ts
+=> nil
+>> dump $ts
+=> nil
+----
+
+We will show the output of our `irb` session in this tutorial if we
+want to illustrate the runtime effect of some code.
+====
+
+The next fundamental operation is `take`, which removes a tuple from
+the tuple space.  Let's remove the `[1, 2, 3]` tuple:
+
+[source, ruby]
+----
+$ts.take [1, 2, 3]
+----
+
+[TIP]
+====
+From `irb`, you should see:
+
+[source, ruby]
+----
+>> $ts.take [1, 2, 3]
+=> [1, 2, 3]
+----
+====
+
+The argument to the `take` operation is actually a _template_, which
+is like a tuple except it specifies a match pattern.  In the above
+example, the *template* `[1, 2, 3]` matches the *tuple* `[1, 2, 3]`
+because both the template and the tuple have the same length (3) and
+the same value at each corresponding position.  However, the template
+`[1, 2, 3]` would *not* match the tuple `[1, 2, 4]` since the last
+component in the tuple is a 4 instead of a 3.
+
+The real power of templates comes from wildcards.  You can specify a
+wildcard in a template with the special value `nil`, which causes the
+template to match any value in the corresponding position of the
+tuple.  For example, the template `[1, 2, nil]` *would* match the
+tuple `[1, 2, 4]` (and also the tuple `[1, 2, 3]`).
+
+Let's try this in `irb` to see what happens (note: we first restore
+the `[1, 2, 3]` tuple because we did a `take` on it before; if you're
+following along but didn't do the `take`, then skip this step):
+
+[source, ruby]
+----
+>> $ts.write [1, 2, 3]
+=> true
+>> $ts.write [1, 2, 4]
+=> true
+>> $ts.take [1, 2, nil]
+=> [1, 2, 3]
+>> $ts.take [1, 2, nil]
+=> [1, 2, 4]
+----
+
+****
+.Preservation of _out order_
+
+The above example illustrates another important property of Marinda.
+It was no coincidence that the above `take` operations returned
+matching tuples in the original order in which they had been written
+to the tuple space (namely, `[1, 2, 3]` followed by `[1, 2, 4]`).
+This ordering of the tuples is called _out order_ (because the
+`write` operation was originally called `out` in David Gelernter's
+_Linda_ tuple space system).  Marinda guarantees that all operations
+that retrieve tuples or traverse a tuple space do so in _out order_.
+****
+
+As a special case, the empty template `[]` matches any tuple of any
+length and content.  For example, we can remove the next tuple in
+_out order_ with
+
+[source, ruby]
+----
+>> $ts.take []
+=> ["foo", 2, "bar", 3.14159]
+>> $ts.take []
+=> [42]
+----
+
+We've just removed all tuples we wrote into the tuple space.  What
+happens if we do another `$ts.take []`?  The `take` will cause the
+calling thread to block until a matching tuple becomes available.
+
+Let's see how this works.  First, execute `$ts.take []`.  Next, start
+up another `irb` session in a new window, and execute `$ts.write
+["hello"]`.  Here's what you should see (we've used `1>>` and `1\=>` to
+denote the contents of the first window, and `2>>` and `2\=>` for the
+second window):
+
+[source, ruby]
+----
+## window 1               ## window 2
+1>> $ts.take []                           
+
+                          2>> $ts.write ["hello"]
+                          2=> true
+
+1=> ["hello"]
+----
+
+NOTE: From now on, we will omit output lines like `2\=> true` from our
+      `irb` session transcripts in order to improve readability.  We
+      will only show the output (\=>) lines when the output is
+      meaningful.
+
+This blocking behavior of `take` is actually quite powerful.  This is
+all you need to implement a simple remote-procedure call like exchange
+between two processes.  Let's implement a simple calculator service.
+Copy and paste the following code into your `irb` window 1 to
+run the service (be sure to hit return after pasting so that `irb`
+evaluates the code--you should end up with the cursor on a line by
+itself just below `end`).
+
+[source, ruby]
+----
+loop do
+  tuple = $ts.take ["ADD", nil, nil]
+  p tuple
+  break if tuple[1] == 0 && tuple[2] == 0
+  $ts.write ["SUM", tuple[1] + tuple[2]]
+end
+----
+
+Now, switch to your `irb` window 2, and query the service:
+
+[source, ruby]
+----
+2>> $ts.write ["ADD", 5, 9]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 14]
+----
+
+It's just as easy to make several requests in a row and then process
+the answers later when you are ready:
+
+[source, ruby]
+----
+2>> $ts.write ["ADD", 2, 3]
+2>> $ts.write ["ADD", 2, 4]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 5]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 6]
+2>> $ts.write ["ADD", 0, 0]   # shut down the calculator server
+----
+
+Let's now add support for variables to this calculator service.  For
+example, the client can ask for the sum _x_ + 2.  To implement this
+feature, we'll use the `read` operation.  The `read` operation is like
+`take` except it doesn't remove the matching tuple from the tuple
+space; it simply returns a copy of it.  Copy and paste the following
+code into your `irb` window 1 to run the service:
+
+[source, ruby]
+----
+clear $ts  # clear tuples from previous examples
+
+def value_of(v)
+  if v.instance_of? String
+    t = $ts.read ["VAR", v, nil]
+    t[2]
+  else
+    v
+  end
+end
+
+loop do
+  tuple = $ts.take ["ADD", nil, nil]
+  p tuple
+  break if tuple[1] == 0 && tuple[2] == 0
+  result = value_of(tuple[1]) + value_of(tuple[2])
+  $ts.write ["SUM", result]
+end
+----
+
+Now query the service from window 2 (the text `<1>` and `<2>` are
+simply annotations so that we can refer back to specific lines):
+
+[source, ruby]
+----
+2>> $ts.write ["VAR", "x", 7]
+2>> $ts.write ["ADD", "x", 2]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 9]
+2>> $ts.write ["VAR", "y", 9]
+2>> $ts.write ["ADD", "x", "y"]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 16]
+2>> $ts.take ["VAR", "x", nil]               # <1>
+2=> ["VAR", "x", 7]
+2>> $ts.write ["VAR", "x", 13]               # <2>
+2>> $ts.write ["ADD", "x", 2]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 15]
+2>> $ts.write ["ADD", 0, 0]   # shut down the calculator server
+----
+
+In the above example, notice how the tuple space makes it easy to
+share data among processes.  You may wonder how safe this is.  For
+example, at the steps marked with `<1>` and `<2>`, we update the value
+of the variable _x_.  What if the calculator server (or some other
+process) tries to look up the value of this variable at the same time?
+
+In a conventional multi-process or multi-threaded program, we would
+have to use locks to atomically update the value of the variable _x_;
+that is, steps `<1>` and `<2>` would be wrapped in a lock so that the
+calculator server won't see an intermediate stage where the variable
+_x_ is missing.
+
+With the tuple space, however, we can update the value of the variable
+_x_ without locks because the `take` operation blocks.  This is
+subtle.  What it means is that the calculator server will block if it
+tries to retrieve the value of the variable _x_ between the steps
+`<1>` and `<2>` when the `VAR` tuple is missing.  Then as soon as the
+client completes step `<2>`, the server will unblock and get the value
+of _x_.  As the programmer of the server and the client, we don't have
+to worry about the safety or correctness of this kind of low-level
+concurrent access.
+
+
+== Non-blocking operations: `readp`, `takep`
+
+In situations where *not* blocking on `read` or `take` is useful or
+necessary, you can use `readp` or `takep`, which will immediately
+return with `nil` if there are no matching tuples.  For example, we
+can clear away all tuples with the following expression, which
+repeatedly removes tuples until none are left:
+
+[source, ruby]
+----
+while $ts.takep []; end
+----
+
+As discussed in the previous section, the blocking property of `read`
+and `take` are actually strengths not weaknesses--they ensure proper
+behavior in the face of concurrent access and modification.
+Therefore, you have to be more careful when using these non-blocking
+operations.
+
+For example, it would be incorrect to use `readp` instead of `read` in
+the calculator server to find the value of a variable because if
+another thread or process removes the `VAR` tuple to update it, then
+`readp` would return nil instead of either the old or new value.
+
+However, we can use `readp` to make the calculator server more robust.
+The previous calculator server has a slight flaw: what happens if the
+client uses an undefined variable _w_ in its addition request?
+
+[source, ruby]
+----
+2>> $ts.write ["ADD", "w", 10]
+2>> $ts.take ["SUM", nil]                    # <1>
+----
+
+If there is no tuple of the form `["VAR", "w", nil]`, then the server
+will block in the `value_of` method, while the client will block at
+the expression `<1>`.  Unless another thread/process writes a `["VAR",
+"w", nil]` tuple, the client and server will deadlock.
+
+To fix this, let's change the structure of the tuples slightly.  We'll
+use `["VAR", "w"]` to mean that variable _w_ is defined, and we'll use
+`["VALUE", "w", 5]` to mean the variable _w_ has the value 5.
+
+Here is the new server code:
+
+[source, ruby]
+----
+clear $ts  # clear tuples from previous examples
+
+def value_of(v)
+  if v.instance_of? String
+    if $ts.readp ["VAR", v]
+      t = $ts.read ["VALUE", v, nil]
+      t[2]
+    else
+      nil
+    end
+  else
+    v
+  end
+end
+
+loop do
+  tuple = $ts.take ["ADD", nil, nil]
+  p tuple
+  break if tuple[1] == 0 && tuple[2] == 0
+  v1 = value_of(tuple[1])
+  v2 = value_of(tuple[2])
+  result = (v1 && v2 ? v1 + v2 : nil)
+  $ts.write ["SUM", result]
+end
+----
+
+And we can query it:
+
+[source, ruby]
+----
+2>> $ts.write ["VAR", "x"]
+2>> $ts.write ["VALUE", "x", 7]
+2>> $ts.write ["ADD", "x", 2]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 9]
+2>> $ts.write ["ADD", "x", "w"]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", nil]
+2>> $ts.write ["ADD", 0, 0]   # shut down the calculator server
+----
+
+There are other ways of solving this problem.  For comparison, we'll
+implement a solution that is more traditional in multi-threaded
+applications.  We'll use the tuple `["VAR-LOCK"]` as a global lock (a
+_semaphore_) to control access to variables.  If this tuple exists,
+then the lock is free; otherwise, someone is holding the lock (that
+is, someone has _taken_ the lock), and we should wait for the lock to
+be released before either retrieving the value of a variable, or
+updating a variable.  Because we have a lock tuple, we no longer need
+the `["VAR", nil]` tuples to indicate which variables are defined.  We
+can simply check for the existence of a suitable `["VALUE", nil, nil]`
+tuple with the non-blocking `readp`.
+
+[source, ruby]
+----
+clear $ts  # clear tuples from previous examples
+
+def value_of(v)
+  if v.instance_of? String
+    $ts.take ["VAR-LOCK"]
+    t = $ts.readp ["VALUE", v, nil]
+    $ts.write ["VAR-LOCK"]
+    return (t ? t[2] : nil)
+  else
+    v
+  end
+end
+
+loop do  # same code as before
+  tuple = $ts.take ["ADD", nil, nil]
+  p tuple
+  break if tuple[1] == 0 && tuple[2] == 0
+  v1 = value_of(tuple[1])
+  v2 = value_of(tuple[2])
+  result = (v1 && v2 ? v1 + v2 : nil)
+  $ts.write ["SUM", result]
+end
+----
+
+Now prep the tuple space--the lock is initially available:
+
+[source, ruby]
+----
+2>> $ts.write ["VAR-LOCK"]
+----
+
+And query the service:
+
+[source, ruby]
+----
+2>> $ts.take ["VAR-LOCK"]
+2>> $ts.write ["VALUE", "x", 7]
+2>> $ts.write ["VALUE", "y", 9]
+2>> $ts.write ["VAR-LOCK"]
+2>> $ts.write ["ADD", "x", "y"]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", 16]
+2>> $ts.write ["ADD", "x", "w"]
+2>> $ts.take ["SUM", nil]
+2=> ["SUM", nil]
+2>> $ts.write ["ADD", 0, 0]   # shut down the calculator server
+----
+
+There is nothing fundamentally wrong with this traditional solution.
+However, the global `["VAR-LOCK"]` tuple is a potential bottleneck--it
+only allows sequential access by competing threads/processes.  In
+contrast, the previous solution involving `["VAR", nil]` tuples allows
+the maximum level of concurrency: competing threads/processes can
+access or update _independent_ variables in parallel.  It is only when
+they need to access/update the same variable that sequential access is
+(implicitly) imposed, but that's fine.
+
+
+== Bulk operations: `read_all`, `monitor`
+
+Marinda provides two operations for iterating over all tuples that
+match a template.  Both `read_all` and `monitor` return all matching
+tuples one by one, but `read_all` stops iterating when it has passed
+over all tuples while `monitor` blocks and returns future matching
+tuples as they are written by another thread/process.
+
+Both operations iterate over tuples in _out order_.  As an important
+consequence, you'll never miss tuples that are added by another
+thread/process while you're in the middle of iterating, because all
+tuples are essentially appended to the end of the tuple space and
+*never* inserted at some intermediate location that you might have
+already passed over in your iteration.  This property guarantees
+consistent and predictable behavior in the presence of concurrent
+modification by several clients.
+
+For example, you can dump out all (existing) tuples in the tuple space
+with the following:
+
+[source, ruby]
+----
+$ts.read_all([]) do |tuple|
+  p tuple
+end
+----
+
+If you want to continuously monitor all matching tuples indefinitely,
+then you could do:
+
+[source, ruby]
+----
+$ts.monitor([]) do |tuple|
+  p tuple
+end
+----
+
+For either operation, you can terminate the iteration at any time with
+the regular Ruby mechanisms for exiting blocks, such as `break` and
+`return`.
+
+For example, the following method returns the the name of the first
+variable that has a value within the given numeric range [_x1_, _x2_]:
+
+[source, ruby]
+----
+def find_var_in_range(ts, x1, x2)
+  ts.read_all(["VALUE", nil, nil]) do |tuple|
+    var, value = tuple.values_at 1, 2
+    return var if value >= x1 && value <= x2
+  end
+  nil
+end
+----
+
+Both `read_all` and `monitor` are defined to return _all existing_
+tuples that match a template (`monitor` also returns all future
+matching tuples).  Not to be too philosophical, but what does _all
+existing_ mean when the tuple space can be churning under the activity
+of concurrent clients?  The more precise description of how these
+operations work is as follows: they return the next tuple that is
+available *at each step* of the iteration.  So, for the purposes of
+these operations, a tuple _exists_ if it is the next available tuple
+*at the moment* we execute a step in the iteration.  This is why
+`read_all` and `monitor` can return tuples that were not originally in
+the tuple space when the iteration first started, because any tuples
+added later will _exist_ when these operations finally reach those
+tuples in _out order_.
+
+With this more precise understanding of how these operations work, it
+should now be clear what happens if another client removes a tuple
+before `read_all` or `monitor` has reached that tuple.  By the time
+the iteration reaches the position where the tuple had been in _out
+order_, the tuple is no longer there and therefore it no longer
+_exists_, and so the iteration operation will not return the
+previously removed tuple.
+
+Here is a poser to test your understanding.  What if you had the
+following three clients running at about the same time.  What
+tuples will client 2 print out?
+
+[source, ruby]
+----
+## client 1       ## client 2                      ## client 3
+1>> $ts.take []   2>> $ts.monitor([]) {|t| p t}    3>> $ts.write [1]
+1>> $ts.take []                                    3>> $ts.write [2]
+1>> $ts.take []                                    3>> $ts.write [3]
+----
+
+This is actually a bit of a trick question, because it all depends on
+the precise timing of the operations.  Client 2 might print all, some,
+or none of the tuples written by client 3, depending on precisely when
+client 1 executes its `take` operations.  The important point is that
+the `monitor` and `read_all` operations do *not* (and *cannot*)
+guarantee that they will return all *written* tuples, because
+concurrent clients can remove tuples at any time while an iteration is
+in progress.
+
+This lack of guarantees is not really an issue in practice.  But you
+do need to be careful to not fall into the trap of thinking that you
+can use `monitor` to, for example, log all written tuples for
+debugging purposes.
+
+
+== Multiple client connections
+
+A client can only execute a single operation at a time over any given
+connection to Marinda (in this tutorial, we store an open connection
+in the `$ts` variable).  This is obviously an issue in multi-threaded
+programs, but it can also be an issue in a single-threaded program
+that uses bulk operations.  For example, suppose you tried to write a
+routine that iterates over tuples of the form `[1]` and `[2]`, and
+produces the tuples `[1, 1]` and `[2, 2]`:
+
+[source,ruby]
+----
+>> $ts.write [1]
+>> $ts.write [2]
+>> $ts.read_all([nil]) do |tuple|
+?>   p tuple
+?>   $ts.write [tuple[0], tuple[0]]
+>> end
+[1]
+Marinda::ConnectionBroken: lost connection: Errno::EPIPE: Broken pipe - send(2)
+        from .../marinda-0.8.0/lib/marinda/client.rb:65:in `sock_send'
+        from .../marinda-0.8.0/lib/marinda/client.rb:154:in `send_with_reqnum'
+        from .../marinda-0.8.0/lib/marinda/client.rb:146:in `send_cont'
+        from .../marinda-0.8.0/lib/marinda/client.rb:402:in `read_all'
+        from (irb):65
+>> 
+----
+
+Because this code tried to execute another operation with `$ts` while
+the `read_all` operation was still in progress, the local server
+abruptly dropped the connection, which caused the
+`Marinda::ConnectionBroken` exception.
+
+Fortunately, opening new connections is easy.  You can open a new
+connection in the same way that you opened `$ts`:
+
+[source,ruby]
+----
+$ts2 = Marinda::Client.new(UNIXSocket.open("/tmp/localts.sock"))
+$ts2.hello
+----
+
+But an even better way is to simply duplicate an existing connection:
+
+[source,ruby]
+----
+>> $ts2 = $ts.duplicate
+=> #<Marinda::Client:0x59667c @remote_banner="...", @flags=510,
+   @debug=false, @protocol=2, @global_commons_channel=nil, @reqnum=1,
+   @sock=#<UNIXSocket:0x5963fc>>
+----
+
+Now we can successfully implement our repeater:
+
+[source,ruby]
+----
+$ts2 = $ts.duplicate
+$ts.read_all([nil]) do |tuple|
+  p tuple
+  $ts2.write [tuple[0], tuple[0]]
+end
+----
+
+
+== Global tuple space
+
+So far, we've been working exclusively in the local tuple space, which
+is hosted on the same machine as the client.  The local tuple space
+only supports communication among clients on the local machine, but
+this restriction is also the source of its strength, because it can
+optimize the performance of this communication and provide the unique
+capability of passing open file descriptors between processes (see the
+link:advanced-programming.html[Advanced Client Programming Guide]).
+
+Two clients on two different machines can *only* communicate with each
+other in the global tuple space.  
+
+Accessing the global tuple space is simple, and all operations
+discussed so far work exactly the same way in the global tuple space;
+for example:
+
+[source, ruby]
+----
+$gc = $ts.global_commons
+$gc.write ["Hello World!"]
+----
+
+The `global_commons` method returns a new connection like `duplicate`
+does, except with the connection "opened on" the global tuple space
+(see the _Design rationale_ below for details).  However, unlike the
+`duplicate` method, `global_commons` caches the connection object and
+returns the same object on each subsequent call.  If you really need
+multiple connections, then call `duplicate` as before; for example
+(the `equal?` method tests whether two variables reference the
+*identical* instance of an object--that is, for pointer equality):
+
+[source, ruby]
+----
+>> $gc = $ts.global_commons
+>> $gc2 = $ts.global_commons
+>> $gc2.equal? $gc
+=> true
+>> $gc3 = $gc.duplicate
+>> $gc3.equal? $gc
+=> false
+----
+
+****
+.Design rationale
+
+When we say "the `global_commons` method returns a new connection
+'opened on' the global tuple space", we're just describing the *logical*
+behavior. In reality, the connection is still a Unix domain socket
+connected to the local server just like all Marinda client
+connections.  In Marinda, the local server acts as a proxy to the
+global server, which actually holds the global tuple space; that is,
+individual clients *never* directly open TCP connections themselves to
+the global server.
+
+The following diagram illustrates how all communication between
+machines goes through the local server:
+
+image:local-global-comm.png[]
+
+This is a deliberate design choice tied to a number of usability and
+security goals.  For instance, this design insulates clients from the
+vagaries of wide-area networking.  The interaction between the local
+and global servers is actually complicated because we need to ensure
+that all tuple space operations behave consistently and correctly in
+the face of arbitrary network failure.  At a high level, the tuple space is
+like a multiuser database, and we need to ensure a loose form of the
+ACID (Atomicity, Consistency, Isolation, Durability) database
+properties.  However, unlike a centralized database, we need to
+ensure the ACID properties for the *combined* system that comprises
+both the server and the clients, and not just the server alone.  That
+is, what the client *thinks* is the server's state should be
+consistent with the server's actual state despite network failure.
+
+For example, suppose the implementation were different and that
+clients directly established TCP connections to the global server.
+Now, if the network connection to the global server fails while a
+client is writing a tuple to the global tuple space, should the client
+retry the write after re-establishing the connection?  It depends on
+the precise moment that the connection failed.  If the failure
+happened *before* the global server received the complete write
+request, then the write should be retried, but if the connection
+failed *after* the global server received and executed the request but
+before it *confirmed* the write to the client, then no.  When a client
+notices a network failure, it doesn't know which of these two cases
+happened.  If the client always naively retries whenever there is a
+network failure, then more than one instance of the tuple may be
+written into the tuple space (and because a tuple space is a
+_multiset_, it is legal to have multiple instances of the same tuple).
+
+In reality, fault tolerance in Marinda is even more complicated than
+the above example because Marinda is specifically designed to work
+over a wide area where the
+http://en.wikipedia.org/wiki/Bandwidth-delay_product[bandwidth-delay
+product] can be large.  If every `write` operation required a
+synchronous confirmation, then it would be impossible to keep the pipe
+filled.  In Marinda, a `write` operation is always asynchronous and
+returns immediately to the client.  The local server will stream a
+series of tuple writes to the global server as fast as they are
+submitted by a client, ensuring high throughput.  Recovering from a
+network failure is therefore complicated since a fair number of tuples
+can be in flight, and since other clients on other nodes may have
+already observed some portion of a stream of unacknowledged writes,
+which may have influenced their behavior in ways that cannot be rolled
+back.  Not to mention, the local client that submitted the series of
+writes has already moved on, under the assumption that the writes
+have been successfully incorporated into the global system state.
+
+As you can see, implementing correct behavior is non-trivial, and the
+local server takes care of it.  The local server also handles the task
+of transparently detecting connection loss in a timely manner and
+re-establishing the connection and the state with the global server.
+
+Of equal importance, this design has some desirable security
+properties.  Because the client must always go through the local
+server, we can enforce security checks and policies even for untrusted
+clients.  Because clients don't open TCP connections themselves,
+we can put them in restrictive environments like FreeBSD jails
+and completely deny them the ability to open TCP connections.
+
+****
+
+
+== Tuple space regions
+
+For simplicity, we've portrayed each of the local and global tuple
+spaces as single areas.  In reality, tuple spaces are divided into
+_regions_.  Regions are distinct, non-overlapping areas _within_
+either the local or global tuple space.  For example, the following
+diagram shows clients communicating over three regions in a tuple
+space:
+
+image:regions-one-to-one.png[]
+
+Regions are useful for seggregating unrelated activity and for
+enforcing security policies through client separation.  Regions are
+persistent--they continue to exist even when no clients are using
+them.
+
+NOTE: Because regions are never destroyed, you should not create too
+      many of them (thousands or tens of thousands, depending on your
+      system), since even an empty region takes up a certain amount of
+      memory.
+
+Regions are identified with a port number, a 48-bit unsigned integer
+greater than 0.  Ports 1024 and below are reserved for future use (to
+implement well-known services).
+
+You access a region by _opening_ it with the `open_port` method on an
+existing connection.  The `open_port` method returns a new connection
+to the requested region; for example:
+
+[source,ruby]
+----
+$work_ts = $ts.open_port 2000
+$work_ts.write ["Hello World!"]
+----
+
+By default, the `open_port` method is available on all
+connections--that is, you can call `open_port` on any connection to
+open a new connection.  If you call `open_port` on a connection to the
+*local* tuple space (more precisely, on a connection to a _region_ in
+the local tuple space), then you'll open a connection to a *local*
+tuple space region.  Similarly, if you call `open_port` on a
+connection to the *global* tuple space, then you'll get a *global*
+tuple space region.  You can override this default behavior with an
+optional second parameter to `open_port` (the _want_global_
+parameter) -- use `true` to open a port on the global tuple space even
+when called on a local tuple space connection; for example,
+
+[source, ruby]
+----
+$ts = Marinda::Client.new(UNIXSocket.open("/tmp/localts.sock"))
+$ts.hello
+$global_ts = $ts.open_port 2000, true
+$gc = $ts.global_commons
+$global_ts2 = $gc.open_port 2000
+$global_ts3 = $global_ts2.duplicate
+----
+
+TIP: The `duplicate` method is convenient for obtaining a new
+     connection to the same region as an existing connection without
+     worrying about the port number or whether the region is
+     local/global.
+
+When you first open a connection to the local tuple space, you are
+connected to the _local commons_, a region that all local clients have
+access to.  For simple uses of Marinda, you can confine all your
+activity to the local commons, which is otherwise exactly the same as
+any other region.  The `global_commons` method returns a connection to
+the global commons, which is a region accessible to all clients on all
+machines and therefore useful for system-wide communication and
+coordination.
+
+****
+.Security design
+
+By design, clients cannot directly open arbitrary ports.  They must
+first open a connection to the local commons and then use that
+connection to bootstrap themselves, either through the `open_port`
+method (which may be restricted) or by receiving open connections from
+other local clients (who can pass the open connections as open file
+descriptors over the local tuple space).
+
+Additional security mechanisms are planned but not yet implemented.
+For example, regions are currently identified with a simple port
+number, but in the future, they will be optionally identified with an
+externalized _capability_ (a cryptographically signed handle to a
+region).
+****
