@@ -22,7 +22,7 @@
 ## $Id: globalstate.rb,v 1.3 2009/03/17 00:59:48 youngh Exp $
 #############################################################################
 
-require 'sqlite3'
+require 'amalgalite'
 
 require 'marinda/port'
 
@@ -76,8 +76,8 @@ class GlobalState
     # operation for prior existence of a session ID.
     loop do
       session_id = rand(281474976710656) + 1  # [1, 2**48]
-      value = @db.get_first_value "SELECT session_id FROM AllocatedSessions
-                                   WHERE session_id=? ", session_id
+      value = @db.first_value_from "SELECT session_id FROM AllocatedSessions
+                                    WHERE session_id=? ", session_id
       if value
         $log.info "GlobalState#generate_session_id: session_id=%#x already " +
           "in use; choosing another", session_id
@@ -101,8 +101,8 @@ class GlobalState
 
 
   def allocated_session_id?(session_id)
-    value = @db.get_first_value "SELECT session_id FROM AllocatedSessions
-                                 WHERE session_id=? ", session_id
+    value = @db.first_value_from "SELECT session_id FROM AllocatedSessions
+                                  WHERE session_id=? ", session_id
     return value ? true : false
   end
 
@@ -115,7 +115,7 @@ class GlobalState
       txn.execute "INSERT INTO ChangeLog(id,timestamp,operation)
                    VALUES(NULL, ?, ?)", @checkpoint_timestamp, "checkpoint"
 
-      @checkpoint_id = txn.last_insert_row_id
+      @checkpoint_id = txn.last_insert_rowid
       $log.info "starting checkpoint: id=%d", @checkpoint_id
       begin
         yield txn, @checkpoint_id
@@ -130,9 +130,9 @@ class GlobalState
 
 
   def find_latest_checkpoint
-    @db.get_first_row "SELECT id,timestamp FROM ChangeLog
-                       WHERE id IN (SELECT max(id) FROM ChangeLog
-                                    WHERE operation='checkpoint');"
+    @db.first_row_from "SELECT id,timestamp FROM ChangeLog
+                        WHERE id IN (SELECT max(id) FROM ChangeLog
+                                     WHERE operation='checkpoint');"
   end
 
 
@@ -145,7 +145,7 @@ class GlobalState
 
 
   def get_global_space_text_value(key)
-    @db.get_first_value("SELECT value FROM GlobalSpace WHERE key=? ", key)
+    @db.first_value_from("SELECT value FROM GlobalSpace WHERE key=? ", key)
   end
 
 
@@ -155,17 +155,16 @@ class GlobalState
 
 
   def open_state_database(path)
-    retval = SQLite3::Database.new path
+    retval = Amalgalite::Database.new path
     unless retval
       $log.err "ERROR: couldn't open/create state database file '%s'", path
       exit 1
     end
 
-    retval.type_translation = true
-    retval.busy_timeout 100 # milliseconds to wait before retrying
-    retval.busy_handler do |data, retries|
+    #XXX retval.busy_timeout 100 # milliseconds to wait before retrying
+    retval.busy_handler do |retries|
       if retries % 10 == 0
-        $log.info "state db busy: waiting on %p, tried %d times", data, retries
+        $log.info "state db busy: tried %d times", retries
       end
       true
     end
