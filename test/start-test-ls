@@ -1,0 +1,5 @@
+#!/bin/sh
+
+RUBY=${1:-ruby}
+
+GEM_SKIP=marinda $RUBY -I../lib ../bin/marinda-ls --root=. --no-detach --v
