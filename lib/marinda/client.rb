@@ -194,11 +194,10 @@ class Client
       length = length_n.unpack("n").first
       payload = sock_recv length
 
-      recv_reqnum = payload[0]
+      recv_reqnum, code = payload.unpack("CC")
       $stderr.puts "received reqnum=" + recv_reqnum.to_s if @debug
 
-      if payload[1] == TUPLE_WITH_RIGHTS_RESP ||
-	  payload[1] == ACCESS_RIGHT_RESP
+      if code == TUPLE_WITH_RIGHTS_RESP || code == ACCESS_RIGHT_RESP
 	file = sock_recv_io
       else
 	file = nil
@@ -216,12 +215,13 @@ class Client
   def decode_response(payload, file, expected)
     $stderr.printf "decode_response(payload=%p, file=%p, expected=%p)\n",
       payload, file, expected if @debug
-    unless payload[0] == ERROR_RESP || expected.include?(payload[0])
+    code = payload.unpack("C").first
+    unless code == ERROR_RESP || expected.include?(code)
       file.close rescue nil if file
-      raise ProtocolError, "unexpected response from server: #{payload[0]}"
+      raise ProtocolError, "unexpected response from server: #{code}"
     end
 
-    case payload[0]
+    case code
     when HELLO_RESP
       return payload.unpack("CCNa*")  # command, protocol, flags, message
 
@@ -235,7 +235,7 @@ class Client
     when TUPLE_RESP, TUPLE_WITH_RIGHTS_RESP
       tuple = YAML.load payload[1 ... payload.length]
       tuple << file if file
-      return [ payload[0], tuple ]
+      return [ code, tuple ]
 
     when TUPLE_NIL_RESP
       return [ TUPLE_RESP, nil ]
@@ -251,13 +251,13 @@ class Client
 
   def receive_ack
     response = receive ACK_RESP
-    return response[1]
+    return response.unpack("C").first
   end
 
 
   def receive_tuple
     response = receive TUPLE_RESP, TUPLE_NIL_RESP, TUPLE_WITH_RIGHTS_RESP
-    return response[1]
+    return response.unpack("C").first
   end
 
 
@@ -269,13 +269,13 @@ class Client
 
   def receive_access_right
     response = receive ACCESS_RIGHT_RESP
-    return response[1]
+    return response.unpack("C").first
   end
 
 
   def receive_handle
     response = receive HANDLE_RESP
-    return response[1]
+    return response.unpack("C").first
   end
 
 

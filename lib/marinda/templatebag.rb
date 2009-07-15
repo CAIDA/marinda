@@ -105,8 +105,8 @@ class TemplateBag
 
       request = RegionRequest.new worker, port, operation, template, context
       case operation
-      when :read, :monitor, :read_all: @read_requests << request
-      when :take: @consume_requests << request
+      when :read, :monitor, :read_all then @read_requests << request
+      when :take then @consume_requests << request
       else
         $log.err "TemplateBag#restore_state: invalid operation %p " +
           "(session_id=%#x, template=%p)", operation, session_id, template

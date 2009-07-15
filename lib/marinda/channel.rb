@@ -457,27 +457,28 @@ class Channel
   #--------------------------------------------------------------------------
 
   def decode_command(reqnum, payload, fd)
-    case payload[0]
+    code = payload.unpack("C").first
+    case code
     when HELLO_CMD
       return payload.unpack("CCa*")
 
     when WRITE_CMD, REPLY_CMD
       values = YAML.load payload[1 ... payload.length]
-      return [ payload[0], Tuple.new(@private_port, values) ]
+      return [ code, Tuple.new(@private_port, values) ]
 
     when REMEMBER_CMD, CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
 	CREATE_GLOBAL_COMMONS_CHANNEL_CMD
-      return [ payload[0] ]
+      return [ code ]
 
     when FORGET_CMD
       return payload.unpack("CN")
 
     when WRITE_TO_CMD, FORWARD_TO_CMD, PASS_ACCESS_TO_CMD
       peer = payload[1..4].unpack("N").first
-      port = (payload[0] == FORWARD_TO_CMD ? @peer_port : @private_port)
+      port = (code == FORWARD_TO_CMD ? @peer_port : @private_port)
       values = YAML.load payload[5 ... payload.length]
-      retval = [ payload[0], peer, Tuple.new(port, values) ]
-      retval << fd if payload[0] == PASS_ACCESS_TO_CMD
+      retval = [ code, peer, Tuple.new(port, values) ]
+      retval << fd if code == PASS_ACCESS_TO_CMD
       return retval
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, TAKE_PRIV_CMD,
@@ -485,10 +486,10 @@ class Channel
       values = YAML.load payload[1 ... payload.length]
       template = Template.new @private_port, values
       template.reqnum = reqnum
-      return [ payload[0], template ]
+      return [ code, template ]
 
     when NEXT_CMD, CANCEL_CMD
-      return [ payload[0] ]
+      return [ code ]
 
     when OPEN_PORT_CMD
       retval = payload.unpack("CwC")
@@ -497,7 +498,7 @@ class Channel
 
     else
       return [ INVALID_CMD,
-	"protocol error: unknown command code #{payload[0]} from client",
+	"protocol error: unknown command code #{code} from client",
 	payload ]
     end
   end
@@ -600,7 +601,7 @@ class Channel
       handle_client_message sender, payload, fd
     rescue ChannelPrivilegeError
       $log.debug "Channel#client_message: %p", $!
-      reqnum = payload[0]
+      reqnum = payload.unpack("C").first
       send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
     rescue ChannelError
       $log.info "Channel#client_message: %p", $!

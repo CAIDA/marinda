@@ -275,7 +275,9 @@ class ClientIO
                 $log.debug "client read_data: buffer.payload = %p",
                   buffer.payload
               end
-	      if buffer.payload[1] == ChannelMessageCodes::PASS_ACCESS_TO_CMD
+
+              code = payload.unpack("C").first
+	      if code == ChannelMessageCodes::PASS_ACCESS_TO_CMD
 		if data.length - start > 0
 		  raise EOFError, "client protocol error: no file descriptor"
 		end

@@ -720,8 +720,8 @@ class GlobalSpaceDemux
     context.protocol = [ PROTOCOL_VERSION, protocol ].min
     context.banner = banner
 
-    message = generate_success_hello_message context
-    enq_hello_message context, message
+    hello_message = generate_success_hello_message context
+    enq_hello_message context, hello_message
 
     state = @sock_state[context.sock]
     context.unacked_messages.each do |message|
