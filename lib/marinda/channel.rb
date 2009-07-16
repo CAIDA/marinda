@@ -156,7 +156,7 @@ class Channel
 
     $log.debug "Channel#handle_client_message: payload=%p",
       payload if $debug_client_commands
-    reqnum = payload[0]
+    reqnum = payload.unpack("C").first
     command, *arguments = decode_command reqnum, payload[1..-1], fd
     $log.debug "Channel#handle_client_message: received command %d (%s)",
       command, CLIENT_COMMANDS[command] if $debug_client_commands

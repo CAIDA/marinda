@@ -276,7 +276,7 @@ class ClientIO
                   buffer.payload
               end
 
-              code = payload.unpack("C").first
+              code = buffer.payload.unpack("CC")[1]
 	      if code == ChannelMessageCodes::PASS_ACCESS_TO_CMD
 		if data.length - start > 0
 		  raise EOFError, "client protocol error: no file descriptor"

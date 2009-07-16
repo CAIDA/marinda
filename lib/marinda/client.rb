@@ -251,13 +251,13 @@ class Client
 
   def receive_ack
     response = receive ACK_RESP
-    return response.unpack("C").first
+    return response[1]
   end
 
 
   def receive_tuple
     response = receive TUPLE_RESP, TUPLE_NIL_RESP, TUPLE_WITH_RIGHTS_RESP
-    return response.unpack("C").first
+    return response[1]
   end
 
 
@@ -269,13 +269,13 @@ class Client
 
   def receive_access_right
     response = receive ACCESS_RIGHT_RESP
-    return response.unpack("C").first
+    return response[1]
   end
 
 
   def receive_handle
     response = receive HANDLE_RESP
-    return response.unpack("C").first
+    return response[1]
   end
 
 
