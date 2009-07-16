@@ -1,0 +1,103 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## Tests the basic operations of write, read, readp, take, and takep.
+##
+## You must start up marinda-gs and marinda-ls with empty regions prior to
+## running this test script.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2009 The Regents of the University of California.
+## 
+## This file is part of Marinda.
+## 
+## Marinda is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+## 
+## Marinda is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
+##
+## $Id: $
+#############################################################################
+
+$: << "."
+$: << "../lib"
+
+require 'socket'
+require 'marinda'
+require 'marinda/verboseclient'
+
+Thread.abort_on_exception = true
+
+SOCKET = "/tmp/localts-test.sock"
+s = UNIXSocket.open SOCKET
+$c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
+$c.hello
+$g = Marinda::VerboseClient.new $c.global_commons, "g"
+$local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
+$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g123")
+
+def assert_equal(x, y)
+  unless x == y
+    printf "FAILED: %p doesn't equal %p\n", x, y
+    exit 1
+  else
+    printf "ok %p\n", y
+  end
+end
+
+def test_write_read_isolated(ts, t)
+  ts.write t
+  assert_equal(ts.read([]), t)
+  assert_equal(ts.read(t), t)
+  assert_equal(ts.readp([]), t)
+  assert_equal(ts.readp(t), t)
+end
+
+def test_basic_operations(ts, descr)
+  puts "\n::: testing basic operations in #{descr} :::"
+
+  ts.write [1,2,3,4,5,6]
+  assert_equal(ts.take([]), [1,2,3,4,5,6])
+
+  ts.write [1,2,3,4,5,6]
+  assert_equal(ts.takep([]), [1,2,3,4,5,6])
+
+  test_write_read_isolated ts, [7, 8]
+  assert_equal(ts.take([]), [7, 8])
+
+  test_write_read_isolated ts, ["abc", 5, "def"]
+  assert_equal(ts.take([]), ["abc", 5, "def"])
+
+  test_write_read_isolated ts, [true, false]
+  assert_equal(ts.take([]), [true, false])
+
+  ts.write [3, 7, 9]
+  ts.write [11, 13, 17]
+  ts.write ["foo", "bar"]
+  ts.write ["foo", "bar", 17]
+  ts.write [true, "bar", 2.75]
+
+  assert_equal(ts.read([11, 13, 17]), [11, 13, 17])
+  assert_equal(ts.read([nil, 13, 17]), [11, 13, 17])
+  assert_equal(ts.read([nil, nil, 17]), [11, 13, 17])
+  assert_equal(ts.read([nil, nil, nil]), [3, 7, 9])
+  assert_equal(ts.read([nil, nil]),["foo", "bar"])
+  assert_equal(ts.read([nil, 13, nil]), [11, 13, 17])
+  assert_equal(ts.read(["foo", "bar", nil]), ["foo", "bar", 17])
+  assert_equal(ts.read([nil, "bar", nil]), ["foo", "bar", 17])
+  assert_equal(ts.read([true, "bar", nil]), [true, "bar", 2.75])
+
+end
+
+test_basic_operations $c, "local commons"
+test_basic_operations $local_123, "local region 123"
+test_basic_operations $g, "global commons"
+test_basic_operations $global_456, "global region 456"
