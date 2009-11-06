@@ -42,7 +42,7 @@ $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c.hello
 $g = Marinda::VerboseClient.new $c.global_commons, "g"
 $local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
-$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g123")
+$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g456")
 
 def assert_equal(x, y)
   unless x == y
