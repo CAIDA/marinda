@@ -35,9 +35,13 @@ require 'thread'
 require 'syslog'
 require 'yaml'
 
+require 'rev'
+require 'rev/ssl'
+
 require 'marinda/utils'
 require 'marinda/globaldemux'
 require 'marinda/connection'
+require 'marinda/sslsupport'
 
 Thread.abort_on_exception = true
 
@@ -118,10 +122,12 @@ end
 
 class GlobalConfig
 
+  include Marinda::SSLSupport
+
   class MalformedConfigException < RuntimeError; end
 
   attr_reader :server_port, :nodes, :use_ssl, :check_client_name, :cert, :key
-  attr_reader :ca_file, :ca_path
+  attr_reader :ca_file, :ca_path, :ssl_context
 
   # Can raise MalformedConfigException and YAML exceptions.
   def initialize(path)
@@ -141,6 +147,12 @@ class GlobalConfig
 
       unless @ca_file || @ca_path
         raise MalformedConfigException, "need either ca_file or ca_path"
+      end
+
+      begin
+        @ssl_context = create_ssl_context @cert, @key, @ca_file, @ca_path
+      rescue
+        raise MalformedConfigException, "invalid SSL config: " + $!.inspect
       end
     end
 
@@ -254,6 +266,8 @@ class GlobalConfig
 
 end
 
+
+#===========================================================================
 
 def log_exception(exn)
   msg = exn.class.name + ": " + exn.to_s
