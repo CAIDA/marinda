@@ -36,7 +36,7 @@ require 'syslog'
 require 'yaml'
 
 require 'marinda/utils'
-require 'marinda/globaldemux'
+require 'marinda/globalts'
 require 'marinda/connection'
 
 Thread.abort_on_exception = true
@@ -144,16 +144,16 @@ class GlobalConfig
       end
     end
 
-    # select processing in GlobalSpaceDemux
+    # select processing in GlobalSpace
     import_optional config, "debug_io_select", TrueClass
 
-    # read_data and write_data in GlobalSpaceDemux
+    # read_data and write_data in GlobalSpace
     import_optional config, "debug_io_bytes", TrueClass
 
-    # process_mux_message in GlobalSpaceDemux
+    # process_mux_message in GlobalSpace
     import_optional config, "debug_io_messages", TrueClass
 
-    # command/request handling in GlobalSpaceDemux
+    # command/request handling in GlobalSpace
     import_optional config, "debug_commands", TrueClass
   end
 
@@ -301,7 +301,7 @@ else
   connection = Marinda::InsecureServerConnection.new config.server_port
 end
 
-# We must detach before starting up GlobalSpaceDemux, since detaching kills
+# We must detach before starting up GlobalSpace, since detaching kills
 # all non-main threads due to the use of fork().  Detach after creating
 # the server socket to make it easier for the user to detect a connection
 # setup problem.
@@ -312,7 +312,7 @@ if $options.detach
 end
 
 begin
-  demux = Marinda::GlobalSpaceDemux.new $options.state_db
+  space = Marinda::GlobalSpace.new $options.state_db
   $log.info "waiting for clients on port %d", config.server_port
 
   read_set = [ connection.sock ]
@@ -322,13 +322,13 @@ begin
     if $checkpoint_state
       $checkpoint_state = false
       $log.info "checkpointing state on SIGUSR1."
-      demux.checkpoint_state()
+      space.checkpoint_state()
     end
 
     if $checkpoint_state_and_exit
       $checkpoint_state_and_exit = false
       $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
-      demux.checkpoint_state_and_exit()
+      space.checkpoint_state_and_exit()
       # XXX it would be nice to unlock and delete the lock file
     end
 
@@ -347,7 +347,7 @@ begin
     if readable
       client_sock, node_id = connection.accept_with_whitelist config.nodes
       next unless client_sock
-      demux.connection_opened node_id, client_sock
+      space.connection_opened node_id, client_sock
     end
   end
 
