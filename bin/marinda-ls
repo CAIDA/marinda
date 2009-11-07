@@ -37,6 +37,7 @@ require 'syslog'
 require 'yaml'
 
 require 'marinda/utils'
+require 'marinda/config'
 require 'marinda/globalmux'
 require 'marinda/connection'
 require 'marinda/localts'
@@ -122,116 +123,6 @@ end
 
 #===========================================================================
 
-class LocalConfig
-
-  class MalformedConfigException < RuntimeError; end
-
-  attr_reader :socket, :node_id, :localspace_only, :demux_addr, :demux_port
-  attr_reader :use_ssl, :cert, :key, :ca_file, :ca_path
-
-  # Can raise MalformedConfigException and YAML exceptions.
-  def initialize(path)
-    config = YAML.load_file path
-    $log.debug "%p", config if $options.verbose
-
-    import_required config, "socket", String
-    import_required config, "node_id", Integer
-    if @node_id <= 0 || @node_id > 2**15
-      raise MalformedConfigException, "invalid 'node_id': " +
-        "must be >= 1 and <= " + (2**15).to_s
-    end
-
-    import_optional config, "localspace_only", TrueClass
-
-    unless @localspace_only
-      import_required config, "demux_addr", String
-      import_required config, "demux_port", Integer
-      import_optional config, "use_ssl", TrueClass
-
-      if @use_ssl
-        import_required config, "cert", String, true
-        import_required config, "key", String, true
-        import_optional config, "ca_file", String, true
-        import_optional config, "ca_path", String, true
-
-        unless @ca_file || @ca_path
-          raise MalformedConfigException, "need either ca_file or ca_path"
-        end
-      end
-    end
-
-    # select processing in GlobalSpaceMux
-    import_optional config, "debug_mux_io_select", TrueClass
-
-    # read_data and write_data in GlobalSpaceMux
-    import_optional config, "debug_mux_io_bytes", TrueClass
-
-    # process_mux_message in GlobalSpaceMux
-    import_optional config, "debug_mux_io_messages", TrueClass
-
-    # command/request handling in GlobalSpaceMux
-    import_optional config, "debug_mux_commands", TrueClass
-
-    # select processing in ClientIO
-    import_optional config, "debug_client_io_select", TrueClass
-
-    # read_data and write_data in ClientIO
-    import_optional config, "debug_client_io_bytes", TrueClass
-
-    # command/request handling in Channel
-    import_optional config, "debug_client_commands", TrueClass
-  end
-
-
-  def export_debugging_flags
-    $debug_mux_io_select = @debug_mux_io_select
-    $debug_mux_io_bytes = @debug_mux_io_bytes
-    $debug_mux_io_messages = @debug_mux_io_messages
-    $debug_mux_commands = @debug_mux_commands
-    $debug_client_io_select = @debug_client_io_select
-    $debug_client_io_bytes = @debug_client_io_bytes
-    $debug_client_commands = @debug_client_commands
-  end
-
-
-  private #----------------------------------------------------------------
-
-  def import_required(config, key, type, expand_path=false)
-    import_scalar config, key, type, true, expand_path
-  end
-
-  def import_optional(config, key, type, expand_path=false)
-    import_scalar config, key, type, false, expand_path
-  end
-
-  def import_scalar(config, key, type, required=true, expand_path=false)
-    if type == TrueClass || type == FalseClass
-      types = [ TrueClass, FalseClass ]
-    else
-      types = [ type ]
-    end
-
-    if config[key] != nil  # if config has the key and the value isn't empty
-      value = config[key]
-      if types.any? { |t| value.kind_of? t }
-        if expand_path && value !~ /^\s*\//
-          value = File.dirname($options.config_path) + "/" + value 
-        end
-        instance_variable_set "@#{key}", value
-      else
-        raise MalformedConfigException, "'#{key}' has the wrong type: " +
-          value.class.name + " instead of " + type.name
-      end
-    else
-      if required
-        raise MalformedConfigException, "missing required config item '#{key}'"
-      end
-    end
-  end
-
-end
-
-
 def log_exception(exn)
   msg = exn.class.name + ": " + exn.to_s
   $log.err "ERROR: aborting on exception: %s; backtrace: %s", msg,
@@ -259,7 +150,7 @@ if $options.use_lock_file
   end
 end
 
-config = LocalConfig.new $options.config_path
+config = Marinda::LocalConfig.new $options.config_path
 config.export_debugging_flags()
 $log.debug "%p", config if $options.verbose
 
@@ -297,7 +188,7 @@ begin
       begin
         # XXX Changing the connection and other settings of a running local
         #     space isn't implemented right now.
-        config = LocalConfig.new $options.config_path
+        config = Marinda::LocalConfig.new $options.config_path
         config.export_debugging_flags()
         $log.debug "%p", config if $options.verbose
       rescue # LocalConfig::MalformedConfigException & YAML exceptions

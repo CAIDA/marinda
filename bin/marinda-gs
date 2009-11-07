@@ -36,6 +36,7 @@ require 'syslog'
 require 'yaml'
 
 require 'marinda/utils'
+require 'marinda/config'
 require 'marinda/globalts'
 require 'marinda/connection'
 
@@ -114,146 +115,6 @@ Signal.trap("HUP") do
   $reload_config = true
 end
 
-#===========================================================================
-
-class GlobalConfig
-
-  class MalformedConfigException < RuntimeError; end
-
-  attr_reader :server_port, :nodes, :use_ssl, :check_client_name, :cert, :key
-  attr_reader :ca_file, :ca_path
-
-  # Can raise MalformedConfigException and YAML exceptions.
-  def initialize(path)
-    config = YAML.load_file path
-    $log.debug "%p", config if $options.verbose
-
-    import_required config, "server_port", Integer
-    import_nodes config
-
-    import_optional config, "use_ssl", TrueClass
-    if @use_ssl
-      import_required config, "check_client_name", TrueClass
-      import_required config, "cert", String, true
-      import_required config, "key", String, true
-      import_optional config, "ca_file", String, true
-      import_optional config, "ca_path", String, true
-
-      unless @ca_file || @ca_path
-        raise MalformedConfigException, "need either ca_file or ca_path"
-      end
-    end
-
-    # select processing in GlobalSpace
-    import_optional config, "debug_io_select", TrueClass
-
-    # read_data and write_data in GlobalSpace
-    import_optional config, "debug_io_bytes", TrueClass
-
-    # process_mux_message in GlobalSpace
-    import_optional config, "debug_io_messages", TrueClass
-
-    # command/request handling in GlobalSpace
-    import_optional config, "debug_commands", TrueClass
-  end
-
-
-  def export_debugging_flags
-    $debug_io_select = @debug_io_select
-    $debug_io_bytes = @debug_io_bytes
-    $debug_io_messages = @debug_io_messages
-    $debug_commands = @debug_commands
-  end
-
-
-  private #----------------------------------------------------------------
-
-  def import_required(config, key, type, expand_path=false)
-    import_scalar config, key, type, true, expand_path
-  end
-
-  def import_optional(config, key, type, expand_path=false)
-    import_scalar config, key, type, false, expand_path
-  end
-
-  def import_scalar(config, key, type, required=true, expand_path=false)
-    if type == TrueClass || type == FalseClass
-      types = [ TrueClass, FalseClass ]
-    else
-      types = [ type ]
-    end
-
-    if config[key] != nil  # if config has the key and the value isn't empty
-      value = config[key]
-      if types.any? { |t| value.kind_of? t }
-        if expand_path && value !~ /^\s*\//
-          value = File.dirname($options.config_path) + "/" + value 
-        end
-        instance_variable_set "@#{key}", value
-      else
-        raise MalformedConfigException, "'#{key}' has the wrong type: " +
-          value.class.name + " instead of " + type.name
-      end
-    else
-      if required
-        raise MalformedConfigException, "missing required config item '#{key}'"
-      end
-    end
-  end
-
-
-  def import_nodes(config)
-    key = "nodes"
-    if config[key] != nil  # if config has the key and the value isn't empty
-      if config[key].instance_of? Hash
-        if config[key].all? { |k,v| k.instance_of?(String) &&
-                                    v.kind_of?(Integer) }
-          validate_node_map config[key]
-          @nodes = config[key]
-        else
-          raise MalformedConfigException, "invalid 'nodes' mapping: " +
-            "wrong entry type: mappings must be from IP address to node ID"
-        end
-      else
-        raise MalformedConfigException, "invalid 'nodes' mapping: config " +
-          "item has the wrong YAML type: " + config[key].class.name +
-          " instead of Hash"
-      end
-    else
-      raise MalformedConfigException, "missing required config item 'nodes'"
-    end
-
-    $log.info "begin node map"
-    @nodes.sort {|a, b| a[1] <=> b[1]}.each do |address, node_id|
-      $log.info "%3d => %p", node_id, address
-    end
-    $log.info "end node map"
-  end
-
-
-  def validate_node_map(mappings)
-    seen_node_id = {}    # node_id => true
-    mappings.each do |address, node_id|
-      unless address =~ /^\d+\.\d+\.\d+\.\d+$/
-        raise MalformedConfigException, "invalid 'nodes' mapping: '" +
-          address + "' is not an IP address"
-      end
-
-      if node_id <= 0 || node_id > 2**15
-        raise MalformedConfigException, "invalid 'nodes' mapping: node_id " +
-          "must be >= 1 and <= " + (2**15).to_s
-      end
-
-      if seen_node_id[node_id]
-        raise MalformedConfigException, "invalid 'nodes' mapping: node_id " +
-          node_id.to_s + " appears more than once"
-      end
-      seen_node_id[node_id] = true
-    end
-  end
-
-end
-
 
 def log_exception(exn)
   msg = exn.class.name + ": " + exn.to_s
@@ -284,7 +145,7 @@ if $options.use_lock_file
   end
 end
 
-config = GlobalConfig.new $options.config_path
+config = Marinda::GlobalConfig.new $options.config_path
 config.export_debugging_flags()
 $log.debug "%p", config if $options.verbose
 
@@ -336,7 +197,7 @@ begin
       $reload_config = false
       $log.info "reloading config file on SIGHUP."
       begin
-        config = GlobalConfig.new $options.config_path
+        config = Marinda::GlobalConfig.new $options.config_path
         config.export_debugging_flags()
         $log.debug "%p", config if $options.verbose
       rescue # GlobalConfig::MalformedConfigException & YAML exceptions
