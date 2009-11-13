@@ -2,3 +2,8 @@
 server_port: 8743
 nodes:
   127.0.0.1: 1
+
+#debug_io_select: true
+#debug_io_bytes: true
+#debug_io_messages: true
+#debug_commands: true

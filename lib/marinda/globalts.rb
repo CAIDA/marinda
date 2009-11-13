@@ -1,6 +1,10 @@
 #############################################################################
 ## The global tuple space, which implements the heart of the global server.
 ##
+## This class should normally be invoked by the marinda-gs script, which
+## contains the remaining pieces (like option parsing and various
+## initializations) needed to create a standalone program.
+##
 ## The global tuple space (global TS) maintains a persistent TCP connection
 ## with each remote tuple space.  All requests from all clients on a given
 ## remote node are multiplexed over a single connection.  The global TS
@@ -57,8 +61,10 @@ class GlobalSpace
   include MuxMessageCodes
 
   CVS_ID = "$Id: globaldemux.rb,v 1.37 2009/04/02 23:27:34 youngh Exp $"
+
+  TIMEOUT = 5 # seconds of timeout for select
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
-  READ_SIZE = 4096         # num bytes to read at once with sysread
+  READ_SIZE = 8192         # num bytes to read at once with sysread
   REGION_METHOD = {
     READ_CMD => :read, READP_CMD => :readp,
     TAKE_CMD => :take, TAKEP_CMD => :takep,
@@ -239,7 +245,9 @@ class GlobalSpace
 
   #------------------------------------------------------------------------
 
-  def initialize(state_db_path)
+  def initialize(config, server_connection, state_db_path)
+    @config = config
+    @server_connection = server_connection
     @global_state = GlobalState.new state_db_path
 
     @services = {}
@@ -251,29 +259,18 @@ class GlobalSpace
       @commons_port => @commons_region
     }
 
-    @inbox = List.new
-    @inbox.extend MonitorMixin
+    @contexts = {}       # node_id => Context
+    @accepting_connections = []   # [ AcceptingSSLConnection ]
 
-    @context = {}       # node_id => Context
-    @sock_state = {}    # sock => SockState
-
-    sock_pair = UNIXSocket.pair Socket::SOCK_STREAM, 0
-    @control_read = sock_pair[0]
-    @control_write = sock_pair[1]
-    @control_write.extend MonitorMixin
-
-    @read_set = [ @control_read ]
+    # IO sets to pass to Kernel::select, and IO sets returned by
+    # select.  We use instance variables so that it is easier to inspect
+    # a core dump with gdb.
+    @read_set = []
     @write_set = []
-
-    @dispatch = {}
-    @dispatch[:connection_opened] = method :handle_connection_opened
-    @dispatch[:checkpoint_state] = method :handle_checkpoint_state
-    @dispatch[:checkpoint_state_and_exit] =
-      method :handle_checkpoint_state_and_exit
+    @readable = nil
+    @writable = nil
 
     restore_state()
-
-    @thread = Thread.new(&method(:execute_toplevel))
   end
 
 
@@ -293,7 +290,7 @@ class GlobalSpace
         context.banner = row[4]
         context.seqnum = row[5]
         context.mux_seqnum = row[6]
-        @context[node_id] = context
+        @contexts[node_id] = context
         sessions[context.session_id] = context unless context.session_id == 0
       end
 
@@ -343,114 +340,14 @@ class GlobalSpace
 
       # XXX sanity check @ongoing_requests by comparing with checkpoint
 
-      #handle_checkpoint_state_and_exit :checkpoint_state_and_exit
-      handle_checkpoint_state :checkpoint_state
+      #checkpoint_state()  # might be useful for debugging persistence
     else
       $log.info "skipping restore: no previous state found."
     end
   end
 
 
-  def execute_toplevel
-    begin
-      execute()
-    rescue
-      msg = sprintf "GlobalSpace: thread exiting on uncaught exception " +
-        "at top-level: %p; backtrace: %s", $!, $!.backtrace.join(" <= ")
-      $log.err "%s", msg
-      log_failure msg rescue nil
-      exit 1
-    end
-  end
-
-
-  def log_failure(msg)
-    path = (ENV['HOME'] || "/tmp") +
-      "/marinda-globaldemux-failed.#{Time.now.to_i}.#{$$}"
-    File.open(path, "w") do |file|
-      file.puts msg
-    end
-  end
-
-
-  def execute
-    loop do
-      if $debug_io_select
-        $log.debug "GlobalSpace: waiting for I/O ..."
-        $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
-        $log.debug "select write_set (%d fds): %p", @write_set.length,@write_set
-      end
-
-      # XXX select can throw "closed stream (IOError)" if a write file
-      #     descriptor has been closed previously; we may want to catch
-      #     this exception and remove the closed descriptor.  Strictly
-      #     speaking, users shouldn't be passing in closed file descriptors.
-      readable, writable = select @read_set, @write_set
-      if $debug_io_select
-        $log.debug "select returned %d readable, %d writable",
-          (readable ? readable.length : 0), (writable ? writable.length : 0)
-      end
-
-      if readable
-        readable.each do |sock|
-          $log.debug "readable %p", sock if $debug_io_select
-          if sock.equal? @control_read
-            handle_messages
-          else
-            read_data sock
-          end
-        end
-      end
-
-      if writable
-        writable.each do |sock|
-          $log.debug "writable %p", sock if $debug_io_select
-          write_data sock
-        end
-      end
-    end
-  end
-
-
-  def handle_messages
-    data = @control_read.sysread READ_SIZE
-
-    messages = []
-    @inbox.synchronize do
-      data.length.times do
-	messages << @inbox.shift
-      end
-    end
-
-    messages.each do |message|
-      $log.debug "handle message %s",
-        inspect_message(message) if $debug_commands
-      handler = @dispatch[message[0]]
-      if handler
-	handler.call(*message)
-      else
-	$log.err "GlobalSpace#handle_messages: ignoring " +
-	  "unknown message type: %p", message
-      end
-    end
-  end
-
-
-  def handle_connection_opened(command, node_id, sock)
-    context = (@context[node_id] ||= Context.new(node_id))
-    context.negotiating = true
-    reset_connection context if context.sock
-    context.sock = sock
-
-    # Leave SockState.write_queue empty so that nothing is sent (or
-    # unacked messages retransmitted) until hello negotiations have
-    # successfully completed.
-    @sock_state[sock] = SockState.new context
-    @read_set << sock
-  end
-
-
-  def handle_checkpoint_state(command)
+  def checkpoint_state
     @global_state.start_checkpoint do |txn, checkpoint_id|
       # There's no need to save the values of @last_public_portnum or
       # @last_private_portnum because these values are already persisted
@@ -459,19 +356,369 @@ class GlobalSpace
         region.checkpoint_state txn, checkpoint_id
       end
 
-      @context.each_value do |context|
+      @contexts.each_value do |context|
         context.checkpoint_state txn, checkpoint_id
       end
     end
   end
 
 
-  def handle_checkpoint_state_and_exit(command)
-    handle_checkpoint_state command
-    $log.info "exiting after checkpoint upon request"
-    exit 0
+  public  #..................................................................
+
+  # The main event loop, handling new client connections and requests on
+  # established client connections.
+  #
+  # This is called by the marinda-gs script, and any exceptions are caught
+  # and reported there.
+  def execute
+    loop do
+      @read_set.clear
+      @write_set.clear
+
+      @read_set << @server_connection.sock
+
+      @accepting_connections.each do |conn|
+        @read_set << conn.sock if conn.need_io == :read
+        @write_set << conn.sock if conn.need_io == :write
+      end
+
+      @contexts.each_value do |context|
+        sock = context.sock
+        if sock && sock.__connection_state == :connected
+          @read_set << sock
+          @write_set << sock unless sock.__connection.write_queue.empty?
+        end
+      end
+
+      if $debug_io_select
+        $log.debug "GlobalSpace: waiting for I/O ..."
+        $log.debug "%d accepting connections", @accepting_connections.length
+        $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
+        $log.debug "select write_set (%d fds): %p", @write_set.length,@write_set
+      end
+
+      # XXX select can throw "closed stream (IOError)" if a write file
+      #     descriptor has been closed previously; we may want to catch
+      #     this exception and remove the closed descriptor.  Strictly
+      #     speaking, users shouldn't be passing in closed file descriptors.
+      @readable, @writable = select @read_set, @write_set, nil, TIMEOUT
+      if $debug_io_select
+        $log.debug "select returned %d readable, %d writable",
+          (@readable ? @readable.length : 0), (@writable ? @writable.length : 0)
+      end
+
+      if @readable
+        @readable.each do |sock|
+          $log.debug "readable %p", sock if $debug_io_select
+          case sock.__connection_state
+          when :listening then handle_incoming_connection()
+          when :accepting then handle_ssl_accept sock
+          when :connected then read_data sock
+          when :defunct  # nothing to do
+          else
+            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
+              "for readable %p", sock.__connection_state, sock
+            fail msg
+          end
+        end
+      end
+
+      if @writable
+        @writable.each do |sock|
+          $log.debug "writable %p", sock if $debug_io_select
+          case sock.__connection_state
+          when :listening
+            msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
+              "for writable %p", sock
+            fail msg
+
+          when :accepting then handle_ssl_accept sock
+          when :connected then write_data sock
+          when :defunct  # nothing to do
+          else
+            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
+              "for writable %p", sock.__connection_state, sock
+            fail msg
+          end
+        end
+      end
+
+      if $checkpoint_state
+        $checkpoint_state = false
+        $log.info "checkpointing state on SIGUSR1."
+        checkpoint_state()
+      end
+
+      if $checkpoint_state_and_exit
+        $checkpoint_state_and_exit = false
+        $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
+        checkpoint_state()
+        $log.info "exiting after checkpoint upon request."
+        return
+      end
+
+      if $reload_config
+        $reload_config = false
+        $log.info "reloading config file on SIGHUP."
+        begin
+          config = Marinda::GlobalConfig.new $options.config_path
+          config.export_debugging_flags()
+          $log.debug "%p", config if $options.verbose
+        rescue # GlobalConfig::MalformedConfigException & YAML exceptions
+          msg = $!.class.name + ": " + $!.to_s
+          $log.err "ERROR: couldn't load new config from '%s': %s; " +
+            "backtrace: %s", $options.config_path, msg,
+            $!.backtrace.join(" <= ")
+        end
+      end
+    end
   end
 
+
+  private #..................................................................
+
+  def handle_incoming_connection
+    client_sock, peer_ip, node_id =
+      @server_connection.accept_with_whitelist @config.nodes
+
+    if client_sock
+      if @config.use_ssl
+        conn = AcceptingSSLConnection.new client_sock, peer_ip, node_id
+        @accepting_connections << conn
+      else
+        setup_connection client_sock, node_id
+      end
+    end
+  end
+
+
+  def setup_connection(sock, node_id)
+    purge_previous_connection node_id
+    context = (@contexts[node_id] ||= Context.new(node_id))
+    context.negotiating = true
+    context.sock = sock
+
+    # Leave SockState.write_queue empty so that nothing is sent (or
+    # unacked messages retransmitted) until hello negotiations have
+    # successfully completed.
+    sock.__connection = SockState.new context
+  end
+
+
+  # Enforces the constraint that only one connection exist between the
+  # global server and a node.
+  #
+  # This method should be called only after a new connection is fully
+  # established and validated--that is, after performing socket-level
+  # accept and, where applicable, SSL-level accept and client validation.
+  # Otherwise, we might open ourselves up to denial of service if client
+  # authentication is not performed; e.g., some program other than the
+  # local server on a node could repeatedly open a connection to the global
+  # server, causing legitimate connections to be dropped (this form of
+  # denial of service won't work with certificate-based client
+  # authentication).
+  #
+  # A prior connection can exist for two reasons: 1) a bug or user error
+  # causing multiple connections (e.g., user starts up multiple local
+  # servers on a node), or 2) a node is reconnecting after the failure of
+  # the prior connection, a failure that hasn't yet been noticed by the
+  # global server.
+  #
+  # Note: Case 2 could happen while a prior connection is waiting on SSL
+  #       accept, but we shouldn't purge entries in @accepting_connections.
+  #       If we do, there's a danger of dropping legitimate reconnection
+  #       attempts.
+  def purge_previous_connection(node_id)
+    context = @contexts[node_id]
+    if context
+      sock = context.sock
+      if sock
+        context.sock = nil
+        sock.close rescue nil
+        sock.__connection_state = :defunct
+      end
+    end
+  end
+
+
+  def handle_ssl_accept(sock)
+    conn = sock.__connection
+
+    begin
+      ssl, node_id = conn.accept
+
+      # By this point, either the accept succeeded, or we got an error like
+      # a post connection failure.  In either case, we'll never need to try
+      # accepting again, so clean up.
+      @accepting_connections.delete conn
+      setup_connection ssl, node_id if ssl
+      
+    rescue Errno::EINTR  # not sure this can be raised by SSL accept
+      # do nothing; don't touch conn.need_io
+
+    rescue IO::WaitReadable
+      conn.need_io = :read
+
+    rescue IO::WaitWritable
+      conn.need_io = :write
+    end
+  end
+
+
+  #--------------------------------------------------------------------------
+
+  def read_data(sock)
+    # We must guard against a socket becoming defunct in the same round of
+    # select() processing.
+    return unless sock.__connection_state == :connected
+
+    messages = []  # list of payload
+
+    state = sock.__connection
+    buffer = state.read_buffer
+    buffer.payload ||= ""
+
+    begin
+      loop do
+        data = (@config.use_ssl ? sock.sysread_nonblock(READ_SIZE) :
+                                  sock.read_nonblock(READ_SIZE))
+
+        $log.debug "read_data from %p (node %d): %p",
+          sock, state.context.node_id, data if $debug_io_bytes
+
+        start = 0
+        while start < data.length
+          data_left = data.length - start
+
+          desired_length = buffer.length || MESSAGE_LENGTH_SIZE
+          fill_amount = desired_length - buffer.payload.length
+          usable_amount = [fill_amount, data_left].min
+
+          buffer.payload << data[start, usable_amount]
+          start += usable_amount
+
+          if usable_amount == fill_amount
+            if buffer.length
+              if $debug_io_bytes
+                $log.debug "read_data: buffer.length = %d", buffer.length
+                $log.debug "read_data: buffer.payload = %p", buffer.payload
+              end
+              messages << buffer.payload
+              buffer.length = nil
+              buffer.payload = ""
+            else
+              buffer.length = buffer.payload.unpack("N").first
+              buffer.payload = ""
+              if $debug_io_bytes
+                $log.debug "read_data: message length = %d", buffer.length
+              end
+              if buffer.length == 0
+                raise EOFError, "mux protocol error: message length == 0"
+              end
+            end
+          end
+        end
+      end
+
+    rescue Errno::EINTR  # might be raised by read_nonblock
+      # do nothing, since we'll automatically retry in the next select() round
+
+    rescue IO::WaitReadable
+      $log.debug "read_data from %p (node %d): IO::WaitReadable",
+        sock, state.context.node_id if $debug_io_bytes
+      # XXX need_io = :read
+
+    rescue IO::WaitWritable
+      $log.debug "read_data from %p (node %d): IO::WaitWritable",
+        sock, state.context.node_id if $debug_io_bytes
+      # XXX need_io = :write
+
+    rescue SocketError, IOError, EOFError, SystemCallError,
+      OpenSSL::SSL::SSLError
+      $log.info "read_data from %p (node %d): %p",
+        sock, state.context.node_id, $!
+      reset_connection state.context
+    end
+
+    messages.each do |payload|
+      process_mux_message state.context, payload
+    end
+  end
+
+
+  # See the comments at class SockState and Context for information on
+  # disconnecting during 'hello negotiations'.
+  def write_data(sock)
+    # We must guard against a socket becoming defunct in the same round of
+    # select() processing.
+    return unless sock.__connection_state == :connected
+
+    state = sock.__connection
+
+    begin
+      loop do
+        return if state.write_queue.empty?
+#      $log.notice "runtime inconsistency: called GlobalSpace#write_data "+
+#        "on a socket (%p) with an empty write_queue; node_id=%d, " +
+#        "session_id=%#x, demux_seqnum=%d, mux_seqnum=%d", sock,
+#        state.context.node_id, state.context.session_id,
+#        state.context.seqnum, state.context.mux_seqnum
+#      return
+
+        buffer = state.write_queue.first
+        if buffer == :disconnect
+          $log.info "write_data: explicitly disconnecting node %d",
+            state.context.node_id
+          state.write_queue.clear
+          reset_connection state.context
+          return
+        end
+
+        while buffer.payload.length > 0
+          n = (@config.use_ssl ? sock.syswrite_nonblock(buffer.payload) :
+                                 sock.write_nonblock(buffer.payload))
+
+          data_written = buffer.payload.slice! 0, n
+          if $debug_io_bytes
+            $log.debug "write_data to %p (node %d): wrote %d bytes, " +
+              "%d left: %p", sock, state.context.node_id, n,
+              buffer.payload.length, data_written
+          end
+        end
+
+	state.write_queue.shift
+      end
+
+    rescue Errno::EINTR  # might be raised by write_nonblock
+      # do nothing, since we'll automatically retry in the next select() round
+
+    rescue IO::WaitReadable
+      $log.debug "write_data from %p (node %d): IO::WaitReadable",
+        sock, state.context.node_id if $debug_io_bytes
+      # XXX need_io = :read
+
+    rescue IO::WaitWritable
+      $log.debug "write_data from %p (node %d): IO::WaitWritable",
+        sock, state.context.node_id if $debug_io_bytes
+      # XXX need_io = :write
+
+    # syswrite may throw "not opened for writing (IOError)";
+    # This also catches Errno::EPIPE.
+    rescue SocketError, IOError, SystemCallError, OpenSSL::SSL::SSLError
+      $log.info "write_data to %p (node %d): %p", sock, state.context.node_id,$!
+      reset_connection state.context
+    end
+  end
+
+
+  def reset_connection(context)
+    context.sock.close rescue nil
+    context.sock.__connection_state = :defunct
+    context.sock = nil
+  end
+
+
+  #--------------------------------------------------------------------------
 
   def process_mux_message(context, payload)
     # mux_seqnum: the latest sequence number at the GlobalSpaceMux-end
@@ -619,7 +866,7 @@ class GlobalSpace
       reset_connection context
       reset_node_session_state context
       context.purge_all_state()
-      @context.delete context.node_id
+      @contexts.delete context.node_id
       # don't respond with ACK or anything else
 
     when CREATE_PRIVATE_REGION_CMD
@@ -759,7 +1006,7 @@ class GlobalSpace
     hello_message = generate_success_hello_message context
     enq_hello_message context, hello_message
 
-    state = @sock_state[context.sock]
+    state = context.sock.__connection
     context.unacked_messages.each do |message|
       state.write_queue << WriteBuffer[marshal_message(context, message)]
     end
@@ -770,8 +1017,7 @@ class GlobalSpace
     message = generate_error_hello_message error_text
     enq_hello_message context, message
 
-    state = @sock_state[context.sock]
-    state.write_queue << :disconnect
+    context.sock.__connection.write_queue << :disconnect
   end
 
 
@@ -798,9 +1044,7 @@ class GlobalSpace
 
 
   def enq_hello_message(context, message)
-    state = @sock_state[context.sock]
-    state.write_queue << WriteBuffer[message]
-    @write_set << context.sock
+    context.sock.__connection.write_queue << WriteBuffer[message]
     # Note: Don't send unacked_messages until negotiations are over.
   end
 
@@ -842,10 +1086,9 @@ class GlobalSpace
     message = Message.new context.seqnum, command, contents
     context.seqnum += 1
 
-    if context.sock  # connected?
-      state = @sock_state[context.sock]
-      @write_set << context.sock if state.write_queue.empty?
-      state.write_queue << WriteBuffer[marshal_message(context, message)]
+    if context.sock && context.sock.__connection_state == :connected
+      m = marshal_message context, message
+      context.sock.__connection.write_queue << WriteBuffer[m]
     end
     context.unacked_messages << message
   end
@@ -860,152 +1103,6 @@ class GlobalSpace
     header = [ context.mux_seqnum, demux_seqnum ].pack("ww")
     length = header.length + contents.length
     [ length ].pack("N") + header + contents
-  end
-
-
-  #--------------------------------------------------------------------------
-
-  def enqueue_event(*message)
-    @inbox.synchronize do
-      @inbox << message
-    end
-    
-    @control_write.synchronize do
-      @control_write.send "M", 0
-    end
-  end
-
-
-  def inspect_message(message)
-    body = message.map do |element|
-      case element
-      when String, Numeric, Symbol, TrueClass, FalseClass, NilClass
-        element.inspect
-      else
-        sprintf "#<%s:0x%x>", element.class.name, element.object_id
-      end
-    end.join(", ")
-    "[" + body + "]"
-  end
-
-
-  #--------------------------------------------------------------------------
-
-  def read_data(sock)
-    state = @sock_state[sock]
-    return unless state  # connection was lost
-
-    messages = []  # list of payload
-
-    buffer = state.read_buffer
-    buffer.payload ||= ""
-
-    begin
-      # NOTE: To prevent blocking, only do 1 sysread call per read_data() call.
-      data = sock.sysread READ_SIZE
-      $log.debug "read_data from %p (node %d): %p",
-        sock, state.context.node_id, data if $debug_io_bytes
-
-      start = 0
-      while start < data.length
-	data_left = data.length - start
-
-	desired_length = buffer.length || MESSAGE_LENGTH_SIZE
-	fill_amount = desired_length - buffer.payload.length
-	usable_amount = [fill_amount, data_left].min
-
-	buffer.payload << data[start, usable_amount]
-	start += usable_amount
-
-	if usable_amount == fill_amount
-	  if buffer.length
-            if $debug_io_bytes
-              $log.debug "read_data: buffer.length = %d", buffer.length
-              $log.debug "read_data: buffer.payload = %p", buffer.payload
-            end
-	    messages << buffer.payload
-	    buffer.length = nil
-	    buffer.payload = ""
-	  else
-	    buffer.length = buffer.payload.unpack("N").first
-	    buffer.payload = ""
-            if $debug_io_bytes
-              $log.debug "read_data: message length = %d", buffer.length
-            end
-	    if buffer.length == 0
-	      raise EOFError, "mux protocol error: message length == 0"
-	    end
-	  end
-	end
-      end
-
-    rescue SocketError, IOError, EOFError, SystemCallError,
-      OpenSSL::SSL::SSLError
-      $log.info "read_data from %p (node %d): %p",
-        sock, state.context.node_id, $!
-      reset_connection state.context
-    end
-
-    messages.each do |payload|
-      process_mux_message state.context, payload
-    end
-  end
-
-
-  # See the comments at class SockState and Context for information on
-  # disconnecting during 'hello negotiations'.
-  def write_data(sock)
-    state = @sock_state[sock]
-    return unless state    # connection was lost
-
-    if state.write_queue.empty?
-      $log.notice "runtime inconsistency: called GlobalSpace#write_data "+
-        "on a socket (%p) with an empty write_queue; node_id=%d, " +
-        "session_id=%#x, demux_seqnum=%d, mux_seqnum=%d", sock,
-        state.context.node_id, state.context.session_id,
-        state.context.seqnum, state.context.mux_seqnum
-      @write_set.delete sock
-      return
-    end
-
-    buffer = state.write_queue.first
-    if buffer == :disconnect
-      $log.info "write_data: explicitly disconnecting node %d",
-        state.context.node_id
-      state.write_queue.clear
-      reset_connection state.context
-      return
-    end
-
-    begin
-      # NOTE: To prevent blocking, only do 1 syswrite call per write_data().
-      n = sock.syswrite buffer.payload
-      data_written = buffer.payload.slice! 0, n
-      if $debug_io_bytes
-        $log.debug "write_data to %p (node %d): wrote %d bytes, %d left: %p",
-          sock, state.context.node_id, n, buffer.payload.length, data_written
-      end
-
-      # syswrite may throw "not opened for writing (IOError)"
-    rescue SocketError, IOError, SystemCallError # including Errno::EPIPE
-      $log.info "write_data to %p (node %d): %p", sock, state.context.node_id,$!
-      reset_connection state.context
-
-    else
-      if buffer.payload.length == 0
-	state.write_queue.shift
-        @write_set.delete sock if state.write_queue.empty?
-      end
-    end
-  end
-
-
-  def reset_connection(context)
-    @read_set.delete context.sock
-    @write_set.delete context.sock
-    @sock_state.delete context.sock
-    context.sock.close rescue nil
-    context.sock = nil
   end
 
 
@@ -1147,23 +1244,6 @@ class GlobalSpace
 
 
   public #===================================================================
-
-  # Events from GlobalServer ------------------------------------------------
-
-  def connection_opened(node_id, sock)
-    enqueue_event :connection_opened, node_id, sock
-  end
-
-
-  def checkpoint_state
-    enqueue_event :checkpoint_state
-  end
-
-
-  def checkpoint_state_and_exit
-    enqueue_event :checkpoint_state_and_exit
-  end
-
 
   # Events from Region ------------------------------------------------------
 

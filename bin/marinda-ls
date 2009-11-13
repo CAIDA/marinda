@@ -34,6 +34,7 @@ require 'ostruct'
 require 'optparse'
 require 'thread'
 require 'syslog'
+require 'socket'
 require 'yaml'
 
 require 'marinda/utils'
@@ -43,6 +44,7 @@ require 'marinda/connection'
 require 'marinda/localts'
 
 Thread.abort_on_exception = true
+BasicSocket.do_not_reverse_lookup = true
 
 $options = OpenStruct.new
 $options.root_dir = "."

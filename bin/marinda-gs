@@ -32,6 +32,7 @@ require 'rubygems'
 require 'ostruct'
 require 'optparse'
 require 'thread'
+require 'socket'
 require 'syslog'
 require 'yaml'
 
@@ -41,6 +42,7 @@ require 'marinda/globalts'
 require 'marinda/connection'
 
 Thread.abort_on_exception = true
+BasicSocket.do_not_reverse_lookup = true
 
 $options = OpenStruct.new
 $options.root_dir = "."
@@ -116,14 +118,6 @@ Signal.trap("HUP") do
 end
 
 
-def log_exception(exn)
-  msg = exn.class.name + ": " + exn.to_s
-  $log.err "ERROR: aborting on exception: %s; backtrace: %s", msg,
-    exn.backtrace.join(" <= ")
-  msg
-end
-
-
 def log_failure(msg)
   path = $options.root_dir + "/marinda-gs-failed.#{Time.now.to_i}.#{$$}"
   File.open(path, "w") do |file|
@@ -135,8 +129,6 @@ end
 #===========================================================================
 # MAIN
 #===========================================================================
-
-TIMEOUT = 5 # seconds
 
 if $options.use_lock_file
   $lock_handle = Marinda.obtain_exclusive_lock $options.lock_file
@@ -154,63 +146,22 @@ $log.debug "%p", config if $options.verbose
 # since an error in the connection config could screw things up.  If the
 # user really wants to change the connection settings, then he can simply
 # restart the global server.
-if config.use_ssl
-  connection = Marinda::ServerSSLConnection.new config.server_port,
-    config.cert, config.key, config.ca_file, config.ca_path,
-    config.check_client_name
-else
-  connection = Marinda::InsecureServerConnection.new config.server_port
-end
+connection = Marinda::InsecureServerConnection.new config.server_port
 
-# We must detach before starting up GlobalSpace, since detaching kills
-# all non-main threads due to the use of fork().  Detach after creating
-# the server socket to make it easier for the user to detect a connection
-# setup problem.
+# Detach after creating the server socket to make it easier for the
+# user to detect a connection setup problem.
 if $options.detach
   $stderr.puts "starting marinda-gs in background\n"
   Marinda::daemonize()
   $log.info "started marinda-gs in background"
 end
 
+exit_status = 0
+
 begin
-  space = Marinda::GlobalSpace.new $options.state_db
   $log.info "waiting for clients on port %d", config.server_port
-
-  read_set = [ connection.sock ]
-  loop do
-    readable = select read_set, nil, nil, TIMEOUT
-
-    if $checkpoint_state
-      $checkpoint_state = false
-      $log.info "checkpointing state on SIGUSR1."
-      space.checkpoint_state()
-    end
-
-    if $checkpoint_state_and_exit
-      $checkpoint_state_and_exit = false
-      $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
-      space.checkpoint_state_and_exit()
-      # XXX it would be nice to unlock and delete the lock file
-    end
-
-    if $reload_config
-      $reload_config = false
-      $log.info "reloading config file on SIGHUP."
-      begin
-        config = Marinda::GlobalConfig.new $options.config_path
-        config.export_debugging_flags()
-        $log.debug "%p", config if $options.verbose
-      rescue # GlobalConfig::MalformedConfigException & YAML exceptions
-        log_exception $!
-      end
-    end
-
-    if readable
-      client_sock, node_id = connection.accept_with_whitelist config.nodes
-      next unless client_sock
-      space.connection_opened node_id, client_sock
-    end
-  end
+  space = Marinda::GlobalSpace.new config, connection, $options.state_db
+  space.execute  # only returns on checkpoint-and-exit request
 
 rescue
   short_msg = $!.class.name + ": " + $!.to_s
@@ -218,8 +169,12 @@ rescue
     "at top-level: %p; backtrace: %s", $!, $!.backtrace.join(" <= ")
   $log.err "%s", msg
   log_failure msg rescue nil
+  exit_status = 1
+
+ensure
   if $options.use_lock_file
     Marinda.release_exclusive_lock $lock_handle rescue nil
   end
-  exit 1
 end
+
+exit exit_status
