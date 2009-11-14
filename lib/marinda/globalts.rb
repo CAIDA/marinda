@@ -224,21 +224,32 @@ class GlobalSpace
   WriteBuffer = Struct.new :payload
 
   # SockState contains state for both read and write directions of sockets.
-  # The attribute :read_buffer only applies to reading and contains a
-  # instance of ReadBuffer.  The attribute :write_queue only applies to
+  # The attribute {read_buffer} only applies to reading and contains a
+  # instance of ReadBuffer.  The attribute {write_queue} only applies to
   # writing and contains an array of WriteBuffer.
   #
-  # You can insert :disconnect into write_queue to disconnect the connection
+  # You can insert :disconnect into {write_queue} to disconnect the connection
   # at a specific point, such as during a failed 'hello negotiations' (see
   # comments at class Context) when you want to disconnect immediately after
   # sending an error response.
+  #
+  # The {ssl_io} attribute is for handling SSL renegotiations.  A read
+  # operation may actually need the SSL socket to be writable, and a write
+  # may need the SSL socket to be readable.  If we're using SSL and an
+  # SSL renegotiation occurs, then this attribute will hold either
+  # :read_needs_writable or :write_needs_readable.  In the former case,
+  # we should include the socket in the write set of select() and then
+  # perform a read when select() indicates the socket is writable, and
+  # vice versa for the latter case.  We should not intermix any
+  # application-level reads/writes until the SSL renegotiation completes.
   class SockState
-    attr_accessor :context, :read_buffer, :write_queue
+    attr_accessor :context, :read_buffer, :write_queue, :ssl_io
 
     def initialize(context)
       @context = context
       @read_buffer = ReadBuffer.new
       @write_queue = List.new  # [WriteBuffer or :disconnect]
+      @ssl_io = nil
     end
   end
 
@@ -385,8 +396,22 @@ class GlobalSpace
       @contexts.each_value do |context|
         sock = context.sock
         if sock && sock.__connection_state == :connected
-          @read_set << sock
-          @write_set << sock unless sock.__connection.write_queue.empty?
+          state = sock.__connection
+          case state.ssl_io  # see comments at class SockState
+          when :read_needs_writable then @write_set << sock
+          when :write_needs_readable then @read_set << sock
+          when nil
+            @read_set << sock
+
+            # XXX unnecessary if the first write_queue item is a :disconnect,
+            #     and a full send window might prevent/delay disconnection?
+            @write_set << sock unless state.write_queue.empty?
+
+          else
+            msg = sprintf "INTERNAL ERROR: unknown ssl_io=%p " +
+              "for socket %p", state.ssl_io, sock
+            fail msg
+          end
         end
       end
 
@@ -413,7 +438,15 @@ class GlobalSpace
           case sock.__connection_state
           when :listening then handle_incoming_connection()
           when :accepting then handle_ssl_accept sock
-          when :connected then read_data sock
+
+          when :connected
+            if sock.__connection.ssl_io == :write_needs_readable
+              sock.__connection.ssl_io = nil
+              write_data sock
+            else
+              read_data sock
+            end
+
           when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
@@ -433,7 +466,15 @@ class GlobalSpace
             fail msg
 
           when :accepting then handle_ssl_accept sock
-          when :connected then write_data sock
+
+          when :connected
+            if sock.__connection.ssl_io == :read_needs_writable
+              sock.__connection.ssl_io = nil
+              read_data sock
+            else
+              write_data sock
+            end
+
           when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
@@ -626,15 +667,14 @@ class GlobalSpace
     rescue IO::WaitReadable
       $log.debug "read_data from %p (node %d): IO::WaitReadable",
         sock, state.context.node_id if $debug_io_bytes
-      # XXX need_io = :read
+      # do nothing, since we'll automatically retry in the next select() round
 
     rescue IO::WaitWritable
-      $log.debug "read_data from %p (node %d): IO::WaitWritable",
-        sock, state.context.node_id if $debug_io_bytes
-      # XXX need_io = :write
+      $log.info "SSL renegotiation: read_data from %p (node %d): " +
+        "IO::WaitWritable", sock, state.context.node_id
+      state.ssl_io = :read_needs_writable
 
-    rescue SocketError, IOError, EOFError, SystemCallError,
-      OpenSSL::SSL::SSLError
+    rescue SocketError, IOError, EOFError, SystemCallError,OpenSSL::SSL::SSLError
       $log.info "read_data from %p (node %d): %p",
         sock, state.context.node_id, $!
       reset_connection state.context
@@ -693,14 +733,14 @@ class GlobalSpace
       # do nothing, since we'll automatically retry in the next select() round
 
     rescue IO::WaitReadable
-      $log.debug "write_data from %p (node %d): IO::WaitReadable",
-        sock, state.context.node_id if $debug_io_bytes
-      # XXX need_io = :read
+      $log.info "SSL renegotiation: write_data to %p (node %d): " +
+        "IO::WaitReadable", sock, state.context.node_id
+      state.ssl_io = :write_needs_readable
 
     rescue IO::WaitWritable
       $log.debug "write_data from %p (node %d): IO::WaitWritable",
         sock, state.context.node_id if $debug_io_bytes
-      # XXX need_io = :write
+      # do nothing, since we'll automatically retry in the next select() round
 
     # syswrite may throw "not opened for writing (IOError)";
     # This also catches Errno::EPIPE.
