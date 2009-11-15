@@ -620,7 +620,7 @@ class GlobalSpace
     buffer.payload ||= ""
 
     begin
-      loop do
+#      loop do  # XXX don't loop or we might starve other connections
         data = (@config.use_ssl ? sock.sysread_nonblock(READ_SIZE) :
                                   sock.read_nonblock(READ_SIZE))
 
@@ -659,7 +659,7 @@ class GlobalSpace
             end
           end
         end
-      end
+#      end
 
     rescue Errno::EINTR  # might be raised by read_nonblock
       # do nothing, since we'll automatically retry in the next select() round
