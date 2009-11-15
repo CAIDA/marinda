@@ -99,7 +99,9 @@ class InsecureClientConnection
 
   def open(must_succeed=true)
     begin
-      TCPSocket.new @host, @port
+      retval = TCPSocket.new @host, @port
+      retval.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+      retval
     rescue  # TCPSocket.new can raise SystemCallError
       $log.err "InsecureClientConnection#open failed: %p", $!
       if must_succeed
@@ -130,6 +132,8 @@ class ClientSSLConnection
     s = ssl = nil
     begin
       s = TCPSocket.new @host, @port
+      s.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+
       ssl = OpenSSL::SSL::SSLSocket.new s, @context
       ssl.sync_close = true
       ssl.connect
@@ -241,6 +245,8 @@ class InsecureServerConnection
   def accept
     begin
       retval = @sock.accept_nonblock
+      retval.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+
       retval.extend ConnectionState
       retval.__connection_state = :connected
       retval.__connection = nil  # will be set later by caller
@@ -262,6 +268,8 @@ class InsecureServerConnection
     client_sock = nil
     begin
       client_sock = @sock.accept_nonblock
+      client_sock.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+
       client_sock.extend ConnectionState
       client_sock.__connection_state = :connected
       client_sock.__connection = nil  # will be set later by caller
