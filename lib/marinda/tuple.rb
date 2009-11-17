@@ -88,7 +88,7 @@ class Tuple
   def inspect
     sprintf "#<Marinda::Tuple:%#x @flags=0b%b, @sender=%#x, " +
       "@forwarder=%#x, @access_fd=%p @values=[%s]>", object_id, @flags,
-      @sender, @forwarder, @access_fd,
+      @sender, (@forwarder || 0), @access_fd,
       @values.map { |v| v || "nil" }.join(", ")
   end
 
