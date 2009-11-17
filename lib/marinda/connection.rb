@@ -138,10 +138,11 @@ class ClientSSLConnection
       ssl.sync_close = true
       ssl.connect
 
-      peer_name = ssl.peeraddr[2]
-      $log.info "ClientSSLConnection#open: opened connection to %s",
-        peer_name
-      ssl.post_connection_check peer_name  # check server DNS name
+      peer_ip = ssl.peeraddr[3]
+      $log.info "ClientSSLConnection#open: opened connection to %s (%s)",
+        @host, peer_ip
+
+      ssl.post_connection_check @host  # check server DNS name
       ssl
 
     # Note: TCPSocket.new can raise SystemCallError;
