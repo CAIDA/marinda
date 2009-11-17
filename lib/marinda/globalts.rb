@@ -621,8 +621,7 @@ class GlobalSpace
 
     begin
 #      loop do  # XXX don't loop or we might starve other connections
-        data = (@config.use_ssl ? sock.sysread_nonblock(READ_SIZE) :
-                                  sock.read_nonblock(READ_SIZE))
+        data = sock.read_nonblock READ_SIZE
 
         $log.debug "read_data from %p (node %d): %p",
           sock, state.context.node_id, data if $debug_io_bytes
@@ -715,9 +714,7 @@ class GlobalSpace
         end
 
         while buffer.payload.length > 0
-          n = (@config.use_ssl ? sock.syswrite_nonblock(buffer.payload) :
-                                 sock.write_nonblock(buffer.payload))
-
+          n = sock.write_nonblock buffer.payload
           data_written = buffer.payload.slice! 0, n
           if $debug_io_bytes
             $log.debug "write_data to %p (node %d): wrote %d bytes, " +
