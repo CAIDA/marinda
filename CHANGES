@@ -1,5 +1,17 @@
-version 0.8.1, 2009-xx-xx
-  * slight clean up of code
+version 0.9.0, 2009-11-19
+  * global server is now single threaded and uses nonblocking I/O (including
+    for SSL)
+    - global server now only works with Ruby 1.9.2 preview 2 or later
+    - local server will still work with earlier Ruby versions
+  * new operations: take_all, consume, monitor_stream, consume_stream
+  * new automated tests of basic, iteration, and stream operations
+  * now uses configured server host name for validation of certs
+  * disabled Nagle
+  * BasicSocket.do_not_reverse_lookup is now true
+  * marinda-gs removes the lock file after checkpoint-and-exit
+  * fixed Ruby 1.9.2 preview 2 compatibility
+  * fixed Ruby 1.9.x compatibility (e.g., string handling and syntax)
+  * switched from sqlite3-ruby to Amalgalite (only affects global server)
 
 version 0.8.0, 2009-03-16
   * added documentation: Installation and Client Programming Guides
