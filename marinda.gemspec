@@ -7,7 +7,7 @@ require 'fileutils'
 
 #---------------------------------------------------------------------------
 
-MY_VERSION = "0.8.0"
+MY_VERSION = "0.9.0"
 
 MY_EXTRA_FILES = ["README", "CHANGES", "COPYING"]
 
@@ -41,9 +41,10 @@ EOF
   s.extra_rdoc_files = MY_EXTRA_FILES
 
   # Although adding this is nice in theory, it's annoying in practice, since
-  # RubyGems will try to automatically upgrade sqlite3-ruby if one is already
-  # installed.  At a minimum, RubyGems will try to fetch the gem index.
-  #s.add_dependency('sqlite3-ruby', '>= 1.2.0')
+  # RubyGems will try to automatically upgrade amalgalite if one is already
+  # installed, and the user may not want that.  At a minimum, RubyGems will
+  # try to fetch the gem index.
+  #s.add_dependency('amalgalite', '>= 0.12.0')
 end
 
 if $0 == __FILE__
