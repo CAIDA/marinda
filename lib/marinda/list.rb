@@ -95,41 +95,44 @@ class List
   end
 
   # Deletes all nodes for which the supplied block yields true (on the
-  # node value).  Returns boolean indicating whether any nodes were deleted.
+  # node value).  Returns true if nodes were deleted; false otherwise.
+  #
+  # This guarantees that nodes are yielded in order and only once.
   def delete_cond
     found = false
+
     node = @head
     while node
-      next_node = find_next_node(node) { |n| yield n.value }
+      node = find_matching_node(node) { |n| yield n.value }
+      break unless node
 
-      if yield node.value
-	found = true
-	unlink node
-      end
-
-      node = next_node
+      found = true
+      node = unlink node
     end
+
     found
   end
 
-  # External iterator: Returns the next node, starting after {node},
+  # External iterator: Returns the next node, starting *at* {node},
   # for which the block yields true (on the node value); returns nil if
-  # no such node is found in the remainder of the list.
+  # no such node is found.
   #
-  # To scan an entire list, first manually check &block(@head), and
-  # then call find_next_node(@head, ...).
+  # To scan an entire list, start with node = find_matching_node(@head)
+  # and repeatedly call node = find_matching_node(node) until node is nil.
   #
   # Use this external iterator (rather than each_node()) when you need
   # to modify the list (i.e., add/delete nodes) while iterating.
-  def find_next_node(node)
+  #
+  # This guarantees that nodes are yielded in order and only once.
+  def find_matching_node(node)
     assert node.active?, "received deleted node"
     assert node.list == self, "received node of different list"
     assert @length > 0, "unexpected empty list"
 
     loop do
-      node = node.next
-      return nil if node.equal? @head
       return node if yield node
+      return nil if node.next.equal? @head
+      node = node.next
     end
     # NOT REACHED
   end
@@ -325,21 +328,24 @@ class List
     compare(other) { |v1, v2| v1.eql? v2 }
   end
 
+  # This guarantees that nodes are yielded in order and only once.
   def find_all_nodes
     retval = []
     node = @head
     while node
-      next_node = find_next_node(node) { |n| yield n.value }
-      retval << node if yield node.value
-      node = next_node
+      node = find_matching_node(node) { |n| yield n.value }
+      break unless node
+
+      retval << node
+      node = (node.next.equal?(@head) ? nil : node.next)
     end
     retval
   end
 
+  # This guarantees that nodes are yielded in order and only once.
   def find_node
     return nil if @length == 0
-    return @head if yield @head.value
-    find_next_node(@head) { |n| yield n.value }
+    find_matching_node(@head) { |n| yield n.value }
   end
 
   # XXX: Should this return Array or List for the multi-value case?
