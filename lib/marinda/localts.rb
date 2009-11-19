@@ -168,7 +168,8 @@ class LocalSpace
 
       when :region_result
 	operation, template, tuple = args
-	if operation == :take || operation == :takep
+        case operation
+        when :take, :takep, :take_all, :consume, :consume_stream
 	  if tuple.access_fd
 	    tuple.access_fd.close rescue nil
 	    tuple.access_fd = nil
