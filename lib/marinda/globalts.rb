@@ -1322,14 +1322,11 @@ class GlobalSpace
       operation, template.reqnum, tuple if $debug_commands
     request = context.ongoing_requests[template.reqnum]
     if request  # if operation not cancelled
-=begin
-      unless tuple && (operation == :monitor || operation == :next)
+      # Always purge ongoing_requests for non-stream operations.  Each
+      # iteration operation must re-instate the request on each iteration.
+      unless operation == :monitor_stream || operation == :consume_stream
         context.ongoing_requests.delete template.reqnum
       end
-=end
-      # XXX: Always purge ongoing_requests for now, until/if we implement
-      #      handling of NEXT_CMD, which is merely an optimization.
-      context.ongoing_requests.delete template.reqnum
       enq_tuple context, request.template.reqnum, tuple
     end
   end

@@ -400,7 +400,13 @@ class GlobalSpaceMux
   # of the command (issued by GlobalSpaceMux) that elicited the response
   # being processed.
   def demux_response(response_code, command_seqnum, arguments)
+    # Always purge ongoing_requests for non-stream operations.  Each
+    # iteration operation must re-instate the request on each iteration.
     message = @ongoing_requests.delete command_seqnum
+    if message && (message.command == MONITOR_STREAM_CMD ||
+                   message.command == CONSUME_STREAM_CMD)
+      @ongoing_requests[command_seqnum] = message
+    end
 
     if $debug_mux_commands
       $log.debug "demux_response: code=%d (%s), seqnum=%d, args=%p, msg=%p",
@@ -413,10 +419,15 @@ class GlobalSpaceMux
     return unless message || response_code == HELLO_RESP
 
     unless response_code == HELLO_RESP
-      # The cancellation message has a pointer to the same request object as
-      # the message being cancelled, so the following removes the request
-      # seqnum mapping for "both" messages at once.
-      reqnum = @request_seqnum.delete message.request.object_id
+      if message.command == MONITOR_STREAM_CMD ||
+         message.command == CONSUME_STREAM_CMD
+        reqnum = @request_seqnum[message.request.object_id]
+      else
+        # The cancellation message has a pointer to the same request object as
+        # the message being cancelled, so the following removes the request
+        # seqnum mapping for "both" messages at once.
+        reqnum = @request_seqnum.delete message.request.object_id
+      end
 
       if message.command == CANCEL_CMD
         cancelled_message = @ongoing_requests.delete reqnum
