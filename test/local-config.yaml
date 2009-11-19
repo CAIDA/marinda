@@ -1,9 +1,9 @@
 --- 
 socket: /tmp/localts-test.sock
 node_id: 1
-#demux_addr: 127.0.0.1
-#demux_port: 8743
-localspace_only: true
+demux_addr: 127.0.0.1
+demux_port: 8743
+#localspace_only: true
 
 #debug_mux_io_select: true
 #debug_mux_io_bytes: true
