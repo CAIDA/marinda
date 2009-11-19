@@ -8,7 +8,7 @@ demux_port: 8743
 #debug_mux_io_select: true
 #debug_mux_io_bytes: true
 #debug_mux_io_messages: true
-debug_mux_commands: true
+#debug_mux_commands: true
 #debug_client_io_select: true
 #debug_client_io_bytes: true
-debug_client_commands: true
+#debug_client_commands: true
