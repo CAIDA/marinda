@@ -68,7 +68,7 @@ end
 begin
   ARGV.replace opts.parse(*ARGV)
 rescue OptionParser::ParseError
-  $stderr.puts "ERROR: " + $!
+  $stderr.puts "ERROR: " + $!.to_s
   $stderr.puts opts
   exit 1
 end
