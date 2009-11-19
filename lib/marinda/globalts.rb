@@ -65,10 +65,19 @@ class GlobalSpace
   TIMEOUT = 5 # seconds of timeout for select
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
   READ_SIZE = 8192         # num bytes to read at once with sysread
+
   REGION_METHOD = {
     READ_CMD => :read, READP_CMD => :readp,
     TAKE_CMD => :take, TAKEP_CMD => :takep,
-    MONITOR_CMD => :monitor, READ_ALL_CMD => :read_all
+    READ_ALL_CMD => :read_all, TAKE_ALL_CMD => :take_all,
+    MONITOR_CMD => :monitor, CONSUME_CMD => :consume, 
+    MONITOR_STREAM_CMD => :monitor_stream_setup,
+    CONSUME_STREAM_CMD => :consume_stream_setup
+  }
+
+  REGION_STREAM_START_METHOD = {
+    MONITOR_STREAM_CMD => :monitor_stream_start,
+    CONSUME_STREAM_CMD => :consume_stream_start
   }
 
   # The Context class contains the context of a logically persistent
@@ -818,8 +827,10 @@ class GlobalSpace
       tuple.forwarder = (forwarder == 0 ? nil : forwarder)
       return [recipient, tuple]
 
-    when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, MONITOR_CMD, READ_ALL_CMD
-      if command == MONITOR_CMD || command == READ_ALL_CMD
+    when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, READ_ALL_CMD, TAKE_ALL_CMD,
+      MONITOR_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
+      if command == READ_ALL_CMD || command == TAKE_ALL_CMD ||
+          command == MONITOR_CMD || command == CONSUME_CMD
 	recipient, sender, cursor, values_yaml = payload.unpack("wwwa*")
       else
 	recipient, sender, values_yaml = payload.unpack("wwa*")
@@ -882,11 +893,27 @@ class GlobalSpace
         port, template, context
       handle_command_result context, command_seqnum, request, tuple
 
-    when MONITOR_CMD, READ_ALL_CMD
+    when READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD
       port, template, cursor = arguments
       request, tuple = region_iteration_operation REGION_METHOD[command],
         port, template, context, cursor
       handle_command_result context, command_seqnum, request, tuple
+
+    when MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
+      port, template = arguments
+
+      # First, set up the request in context.ongoing_requests.
+      request, tuple = region_stream_operation REGION_METHOD[command],
+        port, template, context
+      handle_command_result context, command_seqnum, request, tuple
+
+      # Stream over all existing matching tuples.
+      #
+      # This process is separated from the setup so that we can take
+      # advantage of the existing mechanisms (e.g., GlobalSpace#region_result
+      # callback) for satisfying blocking operations.
+      region_stream_operation REGION_STREAM_START_METHOD[command],
+        port, template, context
 
     when CANCEL_CMD
       port, reqnum = arguments
@@ -1233,9 +1260,15 @@ class GlobalSpace
     @regions[port].__send__ operation, template, context
   end
 
-  # operation == :monitor, :read_all
+  # operation == :read_all, :take_all, :monitor, :consume
   def region_iteration_operation(operation, port, template, context, cursor=0)
     @regions[port].__send__ operation, template, context, cursor
+  end
+
+  # operation == :monitor_stream_setup, :consume_stream_setup,
+  #              :monitor_stream_start, :consume_stream_start
+  def region_stream_operation(operation, port, template, context)
+    @regions[port].__send__ operation, template, context
   end
 
   def region_cancel(port, request)

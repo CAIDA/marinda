@@ -465,6 +465,9 @@ class GlobalSpaceMux
         request.worker.__send__ request.result_method, self,
           request.request_data, *arguments
       else # request.instance_of? RegionRequest
+        # Ensure unacknowledged messages don't accumulate in the global server.
+        enq_ack() if request.operation == :monitor_stream ||
+                     request.operation == :consume_stream
         request.worker.mux_result request.port, request, *arguments
       end
 
@@ -749,12 +752,28 @@ class GlobalSpaceMux
     enq_command TAKEP_CMD, recipient, request
   end
 
+  def read_all(recipient, request, cursor=0)
+    enq_command READ_ALL_CMD, recipient, request, cursor
+  end
+
+  def take_all(recipient, request, cursor=0)
+    enq_command TAKE_ALL_CMD, recipient, request, cursor
+  end
+
   def monitor(recipient, request, cursor=0)
     enq_command MONITOR_CMD, recipient, request, cursor
   end
 
-  def read_all(recipient, request, cursor=0)
-    enq_command READ_ALL_CMD, recipient, request, cursor
+  def consume(recipient, request, cursor=0)
+    enq_command CONSUME_CMD, recipient, request, cursor
+  end
+
+  def monitor_stream(recipient, request)
+    enq_command MONITOR_STREAM_CMD, recipient, request
+  end
+
+  def consume_stream(recipient, request)
+    enq_command CONSUME_STREAM_CMD, recipient, request
   end
 
   def cancel(recipient, request)

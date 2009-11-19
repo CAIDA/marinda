@@ -26,13 +26,19 @@ require 'marinda/list'
 
 module Marinda
 
+# NOTE: We use 'channel' in the argument list of some methods, but the
+#       actual type depends on whether a TemplateBag exists in a local or
+#       global tuple space.  In a local tuple space, the 'channel'
+#       argument is actually a Channel.  In a global tuple space, the
+#       'channel' argument is a GlobalSpace::Context.
+
 class TemplateBag
 
   def initialize(worker, port)
     @worker = worker
     @port = port
-    @read_requests = List.new  # blocked read, monitor, read_all, etc. requests
-    @consume_requests = List.new  # blocked take etc. requests
+    @read_requests = List.new  # blocked read, read_all, monitor, monitor_stream
+    @consume_requests = List.new  # blocked take, take_all, consume, ...
   end
 
   private #==================================================================
@@ -44,6 +50,12 @@ class TemplateBag
 
     @consume_requests.delete_node node
     request = node.value
+
+    # For a stream operation, move the request to the end of the request list
+    # so that stream requests are satisfied in round robin fashion.  This
+    # prevents any one requester from monopolizing tuples.
+    @consume_requests << request if request.operation == :consume_stream
+
     tuple.seqnum = seqnum
     @worker.region_result @port, request.channel, request.operation,
       request.template, tuple
@@ -56,8 +68,11 @@ class TemplateBag
     return false if nodes.length == 0
 
     nodes.each do |node|
-      @read_requests.delete_node node
       request = node.value
+      unless request.operation == :monitor_stream
+        @read_requests.delete_node node
+      end
+
       tuple.seqnum = seqnum
       @worker.region_result @port, request.channel, request.operation,
 	request.template, tuple
@@ -105,8 +120,10 @@ class TemplateBag
 
       request = RegionRequest.new worker, port, operation, template, context
       case operation
-      when :read, :monitor, :read_all then @read_requests << request
-      when :take then @consume_requests << request
+      when :read, :read_all, :monitor, :monitor_stream
+        @read_requests << request
+      when :take, :take_all, :consume, :consume_stream
+        @consume_requests << request
       else
         $log.err "TemplateBag#restore_state: invalid operation %p " +
           "(session_id=%#x, template=%p)", operation, session_id, template

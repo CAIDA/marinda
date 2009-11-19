@@ -404,7 +404,7 @@ class LocalSpace
     end
   end
 
-  # operation == :monitor, :read_all
+  # operation == :read_all, :take_all, :monitor, :consume
   def region_iteration_operation(operation, port, template, channel, cursor=0)
     if Port.global? port
       request = RegionRequest.new self, port, operation, template, channel
@@ -412,6 +412,28 @@ class LocalSpace
       request
     else
       find_region(port).__send__ operation, template, channel, cursor
+    end
+  end
+
+  # operation == :monitor_stream_setup, :consume_stream_setup,
+  #              :monitor_stream_start, :consume_stream_start
+  def region_stream_operation(operation, port, template, channel)
+    if Port.global? port
+      # The global server performs the setup and start procedures itself,
+      # so we only need to trigger the operation as a whole.
+      case operation
+      when :monitor_stream_setup then operation = :monitor_stream
+      when :consume_stream_setup then operation = :consume_stream
+      when :monitor_stream_start, :consume_stream_start then return
+      else
+        fail "INTERNAL ERROR: unhandled stream operation %p", operation
+      end
+
+      request = RegionRequest.new self, port, operation, template, channel
+      @mux.__send__ operation, port, request
+      request
+    else
+      find_region(port).__send__ operation, template, channel
     end
   end
 

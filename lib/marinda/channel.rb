@@ -48,27 +48,51 @@ class Channel
 
   CVS_ID = "$Id: channel.rb,v 1.45 2009/03/16 23:33:59 youngh Exp $"
   PEER_HANDLE_MAX = 2**31 - 1   # max value storable with Array#pack("N")
+
   OPERATION_TO_COMMAND = {
-    :monitor => MONITOR_CMD, :read_all => READ_ALL_CMD, :next => NEXT_CMD
+    :read_all => READ_ALL_CMD, :take_all => TAKE_ALL_CMD,
+    :monitor => MONITOR_CMD, :consume => CONSUME_CMD,
+    :monitor_stream => MONITOR_STREAM_CMD,
+    :consume_stream => CONSUME_STREAM_CMD,
+    :next => NEXT_CMD
   }
+
   REGION_METHOD = {
     READ_CMD => :read, READP_CMD => :readp,
     TAKE_CMD => :take, TAKEP_CMD => :takep,
     TAKE_PRIV_CMD => :take, TAKEP_PRIV_CMD => :takep,
-    MONITOR_CMD => :monitor, READ_ALL_CMD => :read_all
+    READ_ALL_CMD => :read_all, TAKE_ALL_CMD => :take_all,
+    MONITOR_CMD => :monitor, CONSUME_CMD => :consume,
+    MONITOR_STREAM_CMD => :monitor_stream_setup,
+    CONSUME_STREAM_CMD => :consume_stream_setup,
   }
+
+  REGION_STREAM_START_METHOD = {
+    MONITOR_STREAM_CMD => :monitor_stream_start,
+    CONSUME_STREAM_CMD => :consume_stream_start
+  }
+
   COMMAND_PRIV_NEEDED = {
     READ_CMD => :read, READP_CMD => :read,
     TAKE_CMD => :take, TAKEP_CMD => :take,
     TAKE_PRIV_CMD => :none, TAKEP_PRIV_CMD => :none,
-    MONITOR_CMD => :read, READ_ALL_CMD => :read
+    READ_ALL_CMD => :read, TAKE_ALL_CMD => :take,
+    MONITOR_CMD => :read, CONSUME_CMD => :take,
+    MONITOR_STREAM_CMD => :read, CONSUME_STREAM_CMD => :take
   }
+
   COMMAND_ON_PRIVATE_REGION = {
     TAKE_PRIV_CMD => true, TAKEP_PRIV_CMD => true,
   }
 
-  # The iteration state stored in @active_command when monitor or read_all
-  # returns one tuple value and is ready for the next iteration.
+  # An instance of IterationState is stored in @active_command to track
+  # the progress of an ongoing read_all, take_all, monitor, or consume.
+  # These iteration operations return one tuple at a time and only execute
+  # the next iteration upon request from the client.
+  #
+  # We also use this state for the stream operations (monitor_stream and
+  # consume_stream), though only to track the request so that it may be
+  # cancelled by the client.
   IterationState = Struct.new :template, :cursor, :request
   
   attr_reader :alive, :flags, :public_port, :private_port
@@ -95,10 +119,10 @@ class Channel
     #
     # It is a protocol error for a client to issue multiple commands without
     # waiting for responses.  The only exception is the CANCEL_CMD, which
-    # can be issued before a monitor or read_all response.  Normally, a client
-    # won't issue multiple commands, since Marinda::Client enforces this
-    # protocol.  However, Channel should also enforce this protocol to deal
-    # with malicious/buggy clients.
+    # can be issued before a response is received for any of the blocking
+    # operations.  Normally, a client won't issue multiple commands, since
+    # Marinda::Client enforces this protocol.  However, Channel should also
+    # enforce this protocol to deal with malicious/buggy clients.
     #
     # See further comments at client_message.
     #
@@ -124,8 +148,12 @@ class Channel
     @dispatch[TAKEP_CMD] = method :execute_singleton_command
     @dispatch[TAKE_PRIV_CMD] = method :execute_singleton_command
     @dispatch[TAKEP_PRIV_CMD] = method :execute_singleton_command
-    @dispatch[MONITOR_CMD] = method :execute_iteration_command
     @dispatch[READ_ALL_CMD] = method :execute_iteration_command
+    @dispatch[TAKE_ALL_CMD] = method :execute_iteration_command
+    @dispatch[MONITOR_CMD] = method :execute_iteration_command
+    @dispatch[CONSUME_CMD] = method :execute_iteration_command
+    @dispatch[MONITOR_STREAM_CMD] = method :execute_stream_command
+    @dispatch[CONSUME_STREAM_CMD] = method :execute_stream_command
     @dispatch[NEXT_CMD] = method :next_value
     @dispatch[CANCEL_CMD] = method :cancel
     @dispatch[CREATE_NEW_BINDING_CMD] = method :create_new_binding
@@ -166,7 +194,14 @@ class Channel
     # It is a protocol error for a client to issue multiple commands without
     # waiting for responses.
     if @active_command
-      fail_protocol unless [NEXT_CMD, CANCEL_CMD].include? command
+      fail_protocol unless command == NEXT_CMD || command == CANCEL_CMD
+
+      # We reject a NEXT_CMD if an iteration operation has not yielded a
+      # tuple yet (that is, a NEXT_CMD can only be issued after receiving a
+      # tuple).  This condition also disallows NEXT_CMD for all streaming
+      # operations, since streaming operations always store the request in
+      # @active_command; this is by design since NEXT_CMD is unnecessary
+      # for streaming operations.
       fail_protocol if command == NEXT_CMD && @active_command[1].request
     end
 
@@ -190,7 +225,11 @@ class Channel
         request if $debug_client_commands
       @active_command = [command, IterationState[template, nil, request]]
     elsif tuple
-      @active_command = [command, IterationState[template, tuple.seqnum, nil]]
+      # For stream commands, just leave the request in @active_command so
+      # that we properly reject NEXT_CMD in handle_client_message.
+      unless command == MONITOR_STREAM_CMD || command == CONSUME_STREAM_CMD
+        @active_command = [command, IterationState[template, tuple.seqnum, nil]]
+      end
       send_tuple reqnum, tuple
     else
       @active_command = nil
@@ -209,7 +248,8 @@ class Channel
     when TAKE_PRIV_CMD, TAKEP_PRIV_CMD
       @space.region_cancel @private_port, state
 
-    when MONITOR_CMD, READ_ALL_CMD, NEXT_CMD
+    when READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
+      MONITOR_STREAM_CMD, CONSUME_STREAM_CMD, NEXT_CMD
       @space.region_cancel @public_port, state.request if state.request
 
     when CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
@@ -335,7 +375,7 @@ class Channel
   end
 
 
-  # executes: monitor, read_all
+  # executes: read_all, take_all, monitor, consume
   def execute_iteration_command(reqnum, command, template)
     if $debug_client_commands
       $log.debug "client %s(%p)", CLIENT_COMMANDS[command], template
@@ -354,6 +394,41 @@ class Channel
   end
 
 
+  # executes: monitor_stream, consume_stream
+  def execute_stream_command(reqnum, command, template)
+    if $debug_client_commands
+      $log.debug "client %s(%p)", CLIENT_COMMANDS[command], template
+    end
+    case COMMAND_PRIV_NEEDED[command]
+    when :read
+      fail_privilege unless @flags.can_read?
+    when :take
+      fail_privilege unless @flags.can_take?
+    end
+
+    port = (COMMAND_ON_PRIVATE_REGION[command] ? @private_port : @public_port)
+
+    # First, set up the request in @active_command.
+    request, tuple = @space.region_stream_operation REGION_METHOD[command],
+      port, template, self
+    handle_iteration_result reqnum, command, template, request, tuple
+
+    # Stream over all existing matching tuples.
+    #
+    # This process is separated from the setup so that we can take
+    # advantage of the existing mechanisms (e.g., Channel#region_result
+    # callback) for satisfying blocking operations.
+    #
+    # Note: This call is a no-op on global regions, since the global server
+    #       will automatically take care of starting up the streaming.
+    #       LocalSpace takes care of making this a no-op so that the code
+    #       can stay simple here.
+    @space.region_stream_operation REGION_STREAM_START_METHOD[command],
+      port, template, self
+  end
+
+
+  # Note: This should not be called (or allowed) for stream operations.
   def next_value(reqnum, _command)
     $log.debug "client next_value(%d)", reqnum if $debug_client_commands
     command, state = @active_command
@@ -482,7 +557,8 @@ class Channel
       return retval
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, TAKE_PRIV_CMD,
-	TAKEP_PRIV_CMD, MONITOR_CMD, READ_ALL_CMD
+	TAKEP_PRIV_CMD, READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
+        MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       values = YAML.load payload[1 ... payload.length]
       template = Template.new @private_port, values
       template.reqnum = reqnum
@@ -633,10 +709,22 @@ class Channel
       operation, tuple if $debug_client_commands
     send_tuple template.reqnum, tuple
 
+    # Don't update @active_command for stream commands.  Instead, just
+    # leave the request in @active_command so that we properly reject
+    # NEXT_CMD in handle_client_message.
+    return if operation == :monitor_stream ||  operation == :consume_stream
+
+    # We should set @active_command to nil if
+    #
+    #  * a read_all or take_all completes (that is, tuple == nil), or
+    #  * a normally non-blocking operation (e.g., readp) that had blocked
+    #    waiting on results from the global server completes (regardless
+    #    of whether a tuple was returned).
     @active_command = nil
+
     if tuple
       case operation
-      when :monitor, :read_all, :next
+      when :read_all, :take_all, :monitor, :consume, :next
 	state = IterationState[template, tuple.seqnum, nil]
 	@active_command = [OPERATION_TO_COMMAND[operation], state]
       end

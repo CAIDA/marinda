@@ -27,11 +27,20 @@ require 'marinda/list'
 
 module Marinda
 
+# NOTE: We use 'channel' in the argument list of some methods, but the
+#       actual type depends on whether a TupleBag exists in a local or
+#       global tuple space.  In a local tuple space, the 'channel'
+#       argument is actually a Channel.  In a global tuple space, the
+#       'channel' argument is a GlobalSpace::Context.
+
 class TupleBag
 
   attr_reader :seqnum
 
-  def initialize
+  def initialize(worker, port)
+    @worker = worker
+    @port = port
+
     # @seqnum should equal the highest seqnum actually assigned to a tuple
     # and not the next available seqnum.  The value 0 is special--it should
     # never be assigned to a tuple, and hence serves to indicate a seqnum
@@ -84,6 +93,34 @@ class TupleBag
 
     @tuples.delete_node node
     node.value
+  end
+
+  def takep_next(template, cursor)
+    node = @tuples.find_node { |tuple| tuple.seqnum > cursor and
+                                       template.match tuple }
+    return nil unless node
+
+    @tuples.delete_node node
+    node.value
+  end
+
+  def monitor_stream_existing(template, channel)
+    @tuples.each do |tuple|
+      if template.match tuple
+        @worker.region_result @port, channel, :monitor_stream, template, tuple
+      end
+    end
+  end
+
+  def consume_stream_existing(template, channel)
+    @tuples.delete_if do |tuple|
+      if template.match tuple
+        @worker.region_result @port, channel, :consume_stream, template, tuple
+        true  # yes, delete node
+      else
+        false
+      end
+    end
   end
 
   def dump(resource="all")

@@ -32,10 +32,10 @@ class VerboseClient
     @label = label
   end
 
-  def method_missing(name, *args)
+  def method_missing(name, *args, &block)
     printf "%s:%s(%s)\n", @label, name.to_s,
       args.map { |v| v.inspect }.join(", ")
-    retval = @ts.__send__ name, *args
+    retval = @ts.__send__ name, *args, &block
     printf "=> %p\n", retval
     retval
   end

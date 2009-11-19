@@ -279,6 +279,27 @@ class Client
   end
 
 
+  # Execute the iteration of read_all, take_all, monitor, consume,
+  # monitor_stream, and consume_stream.
+  def execute_iteration(needs_next, block)
+    needs_cancel = false
+    begin
+      loop do
+	tuple = receive_tuple
+	break unless tuple
+
+	needs_cancel = true
+	block.call tuple
+	needs_cancel = false
+
+	send_cont "C", NEXT_CMD if needs_next
+      end
+    ensure
+      send_cont "C", CANCEL_CMD if needs_cancel
+    end
+  end
+
+
   public #================================================================
 
   def hello
@@ -387,47 +408,45 @@ class Client
   end
 
 
-  def monitor(template)
+  def read_all(template, &block)
     raise PrivilegeError unless can_read?
-    send "Ca*", MONITOR_CMD, YAML.dump(template)
-
-    needs_cancel = false
-    begin
-      loop do
-	tuple = receive_tuple
-
-	needs_cancel = true
-	yield tuple
-	needs_cancel = false
-
-	send_cont "C", NEXT_CMD
-      end
-    ensure
-      send_cont "C", CANCEL_CMD if needs_cancel
-    end
+    send "Ca*", READ_ALL_CMD, YAML.dump(template)
+    execute_iteration true, block
   end
 
 
-  def read_all(template)
+  def take_all(template, &block)
+    raise PrivilegeError unless can_take?
+    send "Ca*", TAKE_ALL_CMD, YAML.dump(template)
+    execute_iteration true, block
+  end
+
+
+  def monitor(template, &block)
     raise PrivilegeError unless can_read?
-    send "Ca*", READ_ALL_CMD, YAML.dump(template)
+    send "Ca*", MONITOR_CMD, YAML.dump(template)
+    execute_iteration true, block
+  end
 
-    needs_cancel = false
-    begin
-      loop do
-	tuple = receive_tuple
 
-	break unless tuple
+  def consume(template, &block)
+    raise PrivilegeError unless can_take?
+    send "Ca*", CONSUME_CMD, YAML.dump(template)
+    execute_iteration true, block
+  end
 
-	needs_cancel = true
-	yield tuple
-	needs_cancel = false
 
-	send_cont "C", NEXT_CMD
-      end
-    ensure
-      send_cont "C", CANCEL_CMD if needs_cancel
-    end
+  def monitor_stream(template, &block)
+    raise PrivilegeError unless can_read?
+    send "Ca*", MONITOR_STREAM_CMD, YAML.dump(template)
+    execute_iteration false, block
+  end
+
+
+  def consume_stream(template, &block)
+    raise PrivilegeError unless can_take?
+    send "Ca*", CONSUME_STREAM_CMD, YAML.dump(template)
+    execute_iteration false, block
   end
 
 

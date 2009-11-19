@@ -46,8 +46,8 @@ class Region
   def initialize(worker, port)
     @worker = worker
     @port = port
-    @tuples = TupleBag.new
-    @templates = TemplateBag.new @worker, self
+    @tuples = TupleBag.new @worker, @port
+    @templates = TemplateBag.new @worker, @port
   end
 
 
@@ -73,11 +73,20 @@ class Region
   end
 
 
-  # The following region methods return a RegionRequest object if the
-  # operation requested blocks.  Otherwise, they return nil, and the
-  # operation result is returned via a message.  The returned RegionRequest
-  # object is only intended to be used by a Channel to cancel a request;
-  # no other use of the object (or inspection of its contents) is allowed.
+  # The following region methods (e.g., write, read) return
+  #
+  #  * nil, tuple: for a completed singleton operation, and
+  #  * request, nil: for a blocked singleton, iteration, or stream operation.
+  #
+  # The returned RegionRequest object is only intended to be used for
+  # cancelling a request; no other use of the object (or inspection of its
+  # contents) is allowed.
+  #
+  # NOTE: We use 'channel' in the argument list of some methods, but the
+  #       actual type depends on whether a Region exists in a local or
+  #       global tuple space.  In a local tuple space, the 'channel'
+  #       argument is actually a Channel.  In a global tuple space, the
+  #       'channel' argument is a GlobalSpace::Context.
   #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 
@@ -126,6 +135,18 @@ class Region
   end
 
 
+  def read_all(template, channel, cursor=0)
+    tuple = @tuples.readp_next template, cursor
+    return nil, tuple
+  end
+
+
+  def take_all(template, channel, cursor=0)
+    tuple = @tuples.takep_next template, cursor
+    return nil, tuple
+  end
+
+
   def monitor(template, channel, cursor=0)
     tuple = @tuples.readp_next template, cursor
     if tuple
@@ -138,17 +159,52 @@ class Region
   end
 
 
-  def read_all(template, channel, cursor=0)
-    tuple = @tuples.readp_next template, cursor
-    return nil, tuple
+  def consume(template, channel, cursor=0)
+    tuple = @tuples.takep_next template, cursor
+    if tuple
+      return nil, tuple
+    else
+      request = RegionRequest.new @worker, @port, :consume, template, channel
+      @templates.add_consuming request
+      return request, nil
+    end
+  end
+
+
+  def monitor_stream_setup(template, channel)
+    request = RegionRequest.new @worker, @port, :monitor_stream, template,
+      channel
+    @templates.add_reading request
+    return request, nil
+  end
+
+
+  def consume_stream_setup(template, channel)
+    request = RegionRequest.new @worker, @port, :consume_stream, template,
+      channel
+    @templates.add_consuming request
+    return request, nil
+  end
+
+
+  def monitor_stream_start(template, channel)
+    @tuples.monitor_stream_existing template, channel
+  end
+
+
+  def consume_stream_start(template, channel)
+    @tuples.consume_stream_existing template, channel
   end
 
 
   def cancel(request)
-    if request.operation == :take
+    case request.operation
+    when :take, :take_all, :consume, :consume_stream
       @templates.remove_consuming request
-    else # :read, :monitor, :read_all
+    when :read, :read_all, :monitor, :monitor_stream
       @templates.remove_reading request
+    else
+      fail "INTERNAL ERROR: unhandled request operation %p", request.operation
     end
   end
 

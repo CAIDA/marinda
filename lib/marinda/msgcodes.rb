@@ -30,8 +30,10 @@ module Marinda
 #       of message codes will change and break protocol interoperability.
 module ChannelMessageCodes
 
-  # Protocol 2 changes:
+  # Protocol 2b:
+  #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
   #
+  # Protocol 2:
   #  * removed DUMP_CMD
   PROTOCOL_VERSION = 2
 
@@ -63,7 +65,11 @@ module ChannelMessageCodes
     19 => :CREATE_NEW_BINDING_CMD,
     20 => :DUPLICATE_CHANNEL_CMD,
     21 => :CREATE_GLOBAL_COMMONS_CHANNEL_CMD,
-    22 => :OPEN_PORT_CMD
+    22 => :OPEN_PORT_CMD,
+    23 => :TAKE_ALL_CMD,
+    24 => :CONSUME_CMD,
+    25 => :MONITOR_STREAM_CMD,
+    26 => :CONSUME_STREAM_CMD
   }
 
   CLIENT_COMMANDS.each do |value, key|
@@ -108,8 +114,10 @@ end
 
 module MuxMessageCodes
 
-  # Protocol 2 changes:
+  # Protocol 2b:
+  #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
   #
+  # Protocol 2:
   #  * added session ID and node ID to HELLO_CMD & HELLO_RESP
   #  * removed DUMP_CMD
   PROTOCOL_VERSION = 2
@@ -135,7 +143,11 @@ module MuxMessageCodes
     12 => :FIN_CMD,
     13 => :CREATE_PRIVATE_REGION_CMD,
     14 => :DELETE_PRIVATE_REGION_CMD,
-    15 => :CREATE_REGION_PAIR_CMD
+    15 => :CREATE_REGION_PAIR_CMD,
+    16 => :TAKE_ALL_CMD,
+    17 => :CONSUME_CMD,
+    18 => :MONITOR_STREAM_CMD,
+    19 => :CONSUME_STREAM_CMD
   }
 
   MUX_COMMANDS.each do |value, key|
