@@ -120,6 +120,8 @@ end
 
 
 # Migrates pre-Ruby 1.9.x (?) Struct YAML format.
+# << "--- !ruby/struct:Marinda::GlobalSpace::Message \nseqnum: 46941\ncommand: 2\ncontents: !binary |\n  AoLuYg==\n\n\"@seqnum\": \n\"@command\": \n\"@contents\": \n"
+# >> "--- !ruby/struct:Marinda::GlobalSpace::Message \n:seqnum: 46941\n:command: 2\n:contents: !binary |\n  AoLuYg==\n\n"
 def migrate_struct_yaml_format(db)
   updates = []
   db.execute("SELECT checkpoint_id,session_id,seqnum,message
