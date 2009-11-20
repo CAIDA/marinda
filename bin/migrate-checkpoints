@@ -98,8 +98,8 @@ def open_state_database(path, &block)
 end
 
 
-# Migrating pre-Marinda v0.9.0 checkpoints to v0.9.0.
-def migrate_no_GlobalSpaceDemux(db)
+# Migrates pre-Marinda v0.9.0 class name.
+def migrate_GlobalSpaceDemux_rename(db)
   updates = []
   db.execute("SELECT checkpoint_id,session_id,seqnum,message
               FROM UnackedMessages") do |row|
@@ -119,6 +119,39 @@ def migrate_no_GlobalSpaceDemux(db)
 end
 
 
+# Migrates pre-Ruby 1.9.x (?) Struct YAML format.
+def migrate_struct_yaml_format(db)
+  updates = []
+  db.execute("SELECT checkpoint_id,session_id,seqnum,message
+              FROM UnackedMessages") do |row|
+    lines = []
+    row[3].each_line "\n" do |line|
+      if line =~ /^[a-zA-Z]/
+        lines << (":" + line)
+      elsif line =~ /^\"@/
+        # discard line
+      else
+        lines << line
+      end
+    end
+    
+    msg = lines.join ""
+    puts
+    puts "<< " + row[3].inspect
+    puts ">> " + msg.inspect
+
+    row[3] = msg
+    updates << row
+  end
+
+  updates.each do |checkpoint_id,session_id,seqnum,message|
+    db.execute("UPDATE UnackedMessages SET message=?
+                WHERE checkpoint_id=? AND session_id=? AND seqnum=? ",
+               message, checkpoint_id,session_id,seqnum)
+  end
+end
+
+
 #===========================================================================
 # MAIN
 #===========================================================================
@@ -126,10 +159,17 @@ end
 open_state_database($options.state_db) do |db|
   puts
   puts "=" * 70
-  puts "Renaming GlobalSpaceDemux to GlobalSpace"
+  puts "Renaming GlobalSpaceDemux to GlobalSpace ..."
   puts "-" * 70
   puts
-  migrate_no_GlobalSpaceDemux db
+  migrate_GlobalSpaceDemux_rename db
+
+  puts
+  puts "=" * 70
+  puts "Fixing Struct YAML format ..."
+  puts "-" * 70
+  puts
+  migrate_struct_yaml_format db
 end
 
 puts
