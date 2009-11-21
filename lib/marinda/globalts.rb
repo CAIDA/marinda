@@ -514,6 +514,7 @@ class GlobalSpace
           config = Marinda::GlobalConfig.new $options.config_path
           config.export_debugging_flags()
           $log.debug "%p", config if $options.verbose
+          @config = config
         rescue # GlobalConfig::MalformedConfigException & YAML exceptions
           msg = $!.class.name + ": " + $!.to_s
           $log.err "ERROR: couldn't load new config from '%s': %s; " +
