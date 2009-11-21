@@ -1,0 +1,111 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## Measures the latency and throughput of iteration operations read_all,
+## take_all, monitor, and consume.
+##
+## Unlike test_basic-ops, you don't have to start up marinda-gs and marinda-ls
+## with empty regions to run this test script because this script clears
+## out regions prior to use.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2009 The Regents of the University of California.
+## 
+## This file is part of Marinda.
+## 
+## Marinda is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+## 
+## Marinda is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
+#############################################################################
+
+$: << "."
+$: << "../lib"
+
+require 'thread'
+require 'socket'
+require 'benchmark'
+
+require 'marinda'
+require 'marinda/verboseclient'
+
+Thread.abort_on_exception = true
+
+SOCKET = "/tmp/localts-test.sock"
+s = UNIXSocket.open SOCKET
+# $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
+$c = Marinda::Client.new s
+$c.hello
+# $g = Marinda::VerboseClient.new $c.global_commons, "g"
+$g = $c.global_commons
+
+def clear(ts)
+  while ts.takep []; end
+end
+
+
+def populate(ts, n)
+  tuple = [nil, 10, 20, 30]
+  n.times do |i|
+    tuple[0] = i + 1
+    ts.write tuple
+  end
+end
+
+
+#----------------------------------------------------------------------------
+def bm_x_all(descr, ts, template, n)
+  puts "\n::: benchmark read_all/take_all #{template.inspect} of " +
+    "#{n} tuples in #{descr} :::"
+
+  puts
+  puts "Clearing and populating region ..."
+  Benchmark.bm(8) do |bm|
+    bm.report("clear") do clear ts end
+    bm.report("populate") do populate ts, n end
+  end
+
+  puts
+  Benchmark.bm(8) do |bm|
+    bm.report("read_all") do
+      ts.read_all template do |tuple|
+      end
+    end
+
+    bm.report("take_all") do
+      ts.take_all template do |tuple|
+      end
+    end
+  end
+end
+
+#############################################################################
+
+if false
+clear $g
+populate $g, 5000
+# $g.take_all [] do |tuple|
+$g.read_all [] do |tuple|
+end
+exit 0
+end
+
+puts "\n\n==[ local ]=======================================================\n"
+
+bm_x_all "local commons", $c, [], 500
+bm_x_all "local commons", $c, [], 5000
+
+puts "\n\n==[ global ]======================================================\n"
+
+bm_x_all "global commons", $g, [], 500
+bm_x_all "global commons", $g, [], 5000
+
+puts "\n\n### DONE."
