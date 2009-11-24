@@ -141,6 +141,15 @@ config = Marinda::GlobalConfig.new $options.config_path
 config.export_debugging_flags()
 $log.debug "%p", config if $options.verbose
 
+# Perform require now to fail fast if this dependency doesn't exist.
+# This is usually better than failing part way through start up.
+# Also, only recognize the use_judy option at start up so that
+# a missing dependency won't cause a failure later.
+if config.use_judy
+  require 'judy'
+  $use_judy = true
+end
+
 # We intentionally set up the connection just once, at initial start up.
 # We never reset the connection on subsequent requests to re-read the config,
 # since an error in the connection config could screw things up.  If the

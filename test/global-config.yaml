@@ -3,6 +3,8 @@ server_port: 8743
 nodes:
   127.0.0.1: 1
 
+use_judy: true
+
 #debug_io_select: true
 #debug_io_bytes: true
 #debug_io_messages: true

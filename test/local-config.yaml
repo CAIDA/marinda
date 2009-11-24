@@ -5,6 +5,8 @@ demux_addr: 127.0.0.1
 demux_port: 8743
 #localspace_only: true
 
+use_judy: true
+
 #debug_mux_io_select: true
 #debug_mux_io_bytes: true
 #debug_mux_io_messages: true

@@ -25,9 +25,6 @@
 ## $Id: region.rb,v 1.32 2009/03/17 01:07:20 youngh Exp $
 #############################################################################
 
-require 'thread'
-
-require 'marinda/tuplebag'
 require 'marinda/templatebag'
 require 'marinda/request'
 
@@ -44,9 +41,16 @@ class Region
 
 
   def initialize(worker, port)
+    if $use_judy
+      require 'marinda/judytuplebag'
+    else
+      require 'marinda/tuplebag'
+    end
+
     @worker = worker
     @port = port
-    @tuples = TupleBag.new @worker, @port
+    @tuples = ($use_judy ? JudyTupleBag.new(@worker, @port) :
+               TupleBag.new(@worker, @port))
     @templates = TemplateBag.new @worker, @port
   end
 

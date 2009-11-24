@@ -73,6 +73,7 @@ class GlobalConfig < ConfigBase
 
   attr_reader :server_port, :nodes, :use_ssl, :check_client_name, :cert, :key
   attr_reader :ca_file, :ca_path
+  attr_reader :use_judy
 
   # Can raise MalformedConfigException and YAML exceptions.
   def initialize(path)
@@ -94,6 +95,9 @@ class GlobalConfig < ConfigBase
         raise MalformedConfigException, "need either ca_file or ca_path"
       end
     end
+
+    # Use Judy arrays instead of List.
+    import_optional config, "use_judy", TrueClass
 
     # select processing in GlobalSpaceDemux
     import_optional config, "debug_io_select", TrueClass
@@ -178,6 +182,7 @@ class LocalConfig < ConfigBase
 
   attr_reader :socket, :node_id, :localspace_only, :demux_addr, :demux_port
   attr_reader :use_ssl, :cert, :key, :ca_file, :ca_path
+  attr_reader :use_judy
 
   # Can raise MalformedConfigException and YAML exceptions.
   def initialize(path)
@@ -209,6 +214,9 @@ class LocalConfig < ConfigBase
         end
       end
     end
+
+    # Use Judy arrays instead of List.
+    import_optional config, "use_judy", TrueClass
 
     # select processing in GlobalSpaceMux
     import_optional config, "debug_mux_io_select", TrueClass
