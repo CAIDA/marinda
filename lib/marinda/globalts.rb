@@ -41,8 +41,6 @@
 #############################################################################
 
 require 'ostruct'
-require 'thread'
-require 'monitor'
 require 'yaml'
 
 require 'marinda/list'
