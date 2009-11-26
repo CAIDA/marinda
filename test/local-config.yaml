@@ -7,7 +7,7 @@ demux_port: 8743
 
 use_judy: true
 
-#debug_mux_io_select: true
+#debug_io_select: true
 #debug_mux_io_bytes: true
 #debug_mux_io_messages: true
 #debug_mux_commands: true

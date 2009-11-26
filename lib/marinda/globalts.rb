@@ -602,14 +602,9 @@ class GlobalSpace
       @accepting_connections.delete conn
       setup_connection ssl, node_id if ssl
       
-    rescue Errno::EINTR  # not sure this can be raised by SSL accept
-      # do nothing; don't touch conn.need_io
-
-    rescue IO::WaitReadable
-      conn.need_io = :read
-
-    rescue IO::WaitWritable
-      conn.need_io = :write
+    # not sure EINTR can be raised by SSL accept
+    rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable
+      # do nothing; we'll automatically retry in next select round
     end
   end
 

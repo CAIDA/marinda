@@ -68,7 +68,7 @@ class GlobalSpaceMux
   ReadBuffer = Struct.new :length, :payload
   WriteBuffer = Struct.new :payload
 
-  def initialize(node_id, connection)
+  def initialize(node_id)
     @node_id = node_id
 
     # This value is used by both the mux and demux to determine whether one
@@ -94,7 +94,7 @@ class GlobalSpaceMux
     # receives the actual session ID in HELLO_RESP.
     @session_id = 0
 
-    @connection = connection
+    @connection = nil
     @sock = nil        # open socket to demux or nil if lost connection
     @protocol = nil
     @remote_banner = nil
@@ -166,10 +166,6 @@ class GlobalSpaceMux
     @dispatch = {}
     @dispatch[:write_message] = method :handle_write_message
     @dispatch[:connection_opened] = method :handle_connection_opened
-
-    @thread = Thread.new(&method(:execute_toplevel))
-
-    open_connection
   end
 
 

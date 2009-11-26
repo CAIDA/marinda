@@ -1,6 +1,20 @@
 #############################################################################
 ## The local tuple space, which implements the heart of the local server.
 ##
+## This class should normally be invoked by the marinda-ls script, which
+## contains the remaining pieces (like option parsing and various
+## initializations) needed to create a standalone program.
+##
+## The local tuple space (local TS) maintains a persistent TCP connection
+## with the global tuple space.  Operations on global regions from all
+## local clients are multiplexed over the single connection via
+## GlobalSpaceMux.  The global TS executes the forwarded operations and
+## returns the results to the local TS, which then forwards the results to
+## the originating client.
+##
+## The local TS directly executes operations on local regions on behalf of
+## clients.
+##
 ## --------------------------------------------------------------------------
 ## Copyright (C) 2007, 2008, 2009 The Regents of the University of California.
 ## 
@@ -22,25 +36,31 @@
 ## $Id: localts.rb,v 1.26 2009/03/17 01:01:40 youngh Exp $
 #############################################################################
 
-require 'thread'
+require 'ostruct'
+require 'yaml'
 
 require 'marinda/port'
 require 'marinda/region'
 require 'marinda/channel'
-require 'marinda/clientio'
 
 module Marinda
 
 class LocalSpace
 
-  private #===============================================================
+  private
 
   include Socket::Constants
 
-  def initialize(node_id, mux)
-    @node_id = node_id
-    @mux = mux
-    @clientio = ClientIO.new self
+  TIMEOUT = 5 # seconds of timeout for select
+
+  def initialize(config, server_sock)
+    @config = config
+    @server_sock = server_sock
+    @server_sock.extend ConnectionState
+    @server_sock.__connection_state = :accepting
+    @server_sock.__connection = nil
+
+    @node_id = @config.node_id
 
     @last_public_portnum = Port::PUBLIC_PORTNUM_RESERVED
     @last_private_portnum = Port::PRIVATE_PORTNUM_RESERVED
@@ -55,13 +75,32 @@ class LocalSpace
     @channels = Hash.new { |hash, key| hash[key] = Array.new }
     @services = {}
 
+    if @config.localspace_only
+      @connection = nil
+      @mux = nil
+    else
+      if @config.use_ssl
+        @connection = Marinda::ClientSSLConnection.new @config.demux_addr,
+          @config.demux_port, @config.cert, @config.key, @config.ca_file,
+          @config.ca_path
+      else
+        @connection = Marinda::InsecureClientConnection.new @config.demux_addr,
+          @config.demux_port
+      end
+      @mux = Marinda::GlobalSpaceMux.new @node_id
+    end
+
+    # IO sets to pass to Kernel::select, and IO sets returned by
+    # select.  We use instance variables so that it is easier to inspect
+    # a core dump with gdb.
+    @read_set = []
+    @write_set = []
+    @readable = nil
+    @writable = nil
+
     @inbox = Queue.new
 
     @dispatch = {}
-
-    # Events from LocalServer .............................................
-    @dispatch[:add_client] = method :handle_add_client
-    @dispatch[:shutdown] = method :handle_shutdown
 
     # Events from ClientIO ................................................
     @dispatch[:client_removed] = method :handle_client_removed
@@ -88,42 +127,144 @@ class LocalSpace
 
     # Events from Region ..................................................
     @dispatch[:region_result] = method :forward_message
-
-    @thread = Thread.new(&method(:execute_toplevel))
   end
 
 
-  def execute_toplevel
-    begin
-      execute()
-    rescue
-      msg = sprintf "LocalSpace: thread exiting on uncaught exception at " +
-        "top-level: %p; backtrace: %s", $!, $!.backtrace.join(" <= ")
-      $log.err "%s", msg
-      log_failure msg rescue nil
-      exit 1
-    end
-  end
+  public  #..................................................................
 
-
-  def log_failure(msg)
-    path = (ENV['HOME'] || "/tmp") +
-      "/marinda-localts-failed.#{Time.now.to_i}.#{$$}"
-    File.open(path, "w") do |file|
-      file.puts msg
-    end
-  end
-
-
+  # The main event loop, handling new client connections, requests on
+  # established client connections, and message exchange with the global
+  # tuple space.
+  #
+  # This is called by the marinda-ls script, and any exceptions are caught
+  # and reported there.
   def execute
     loop do
-      message = @inbox.deq
-      handler = @dispatch[message[0]]
-      if handler
-	handler.call(*message)
-      else
-	$log.err "LocalSpace#execute: ignoring unknown message: %p", message
+      @read_set.clear
+      @write_set.clear
+
+      @read_set << @server_sock
+
+      if @connection
+        if @connection.need_io == :connect
+          connect_to_global_server()
+        end
+
+        if @connection.need_io == :write
+          @write_set << @connection.sock
+        end
       end
+
+      if $debug_io_select
+        $log.debug "LocalSpace: waiting for I/O ..."
+        $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
+        $log.debug "select write_set (%d fds): %p", @write_set.length,@write_set
+      end
+
+      # XXX select can throw "closed stream (IOError)" if a write file
+      #     descriptor has been closed previously; we may want to catch
+      #     this exception and remove the closed descriptor.  Strictly
+      #     speaking, users shouldn't be passing in closed file descriptors.
+      @readable, @writable = select @read_set, @write_set, nil, TIMEOUT
+      if $debug_io_select
+        $log.debug "select returned %d readable, %d writable",
+          (@readable ? @readable.length : 0), (@writable ? @writable.length : 0)
+      end
+
+      if @readable
+        @readable.each do |sock|
+          $log.debug "readable %p", sock if $debug_io_select
+          case sock.__connection_state
+          when :connecting
+            msg = sprintf "INTERNAL ERROR: __connection_state=:connecting " +
+              "for readable %p", sock
+            fail msg
+
+          when :accepting then handle_client_accept sock
+
+          when :connected
+            # XXX dispatch to the appropriate read_data method
+            read_data sock
+
+          when :defunct  # nothing to do
+          else
+            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
+              "for readable %p", sock.__connection_state, sock
+            fail msg
+          end
+        end
+      end
+
+      if @writable
+        @writable.each do |sock|
+          $log.debug "writable %p", sock if $debug_io_select
+          case sock.__connection_state
+          when :connecting then connect_to_global_server()
+
+          when :accepting
+            msg = sprintf "INTERNAL ERROR: __connection_state=:accepting " +
+              "for writable %p", sock
+            fail msg
+
+          when :connected
+            # XXX dispatch to the appropriate write_data method
+            write_data sock
+
+          when :defunct  # nothing to do
+          else
+            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
+              "for writable %p", sock.__connection_state, sock
+            fail msg
+          end
+        end
+      end
+
+      if $shutdown_requested
+        $shutdown_requested = false
+        $log.info "exiting by request."
+        # XXX cleanly shut down all client connections and the
+        #     global tuple space connection
+        return
+      end
+
+      if $reload_config
+        $reload_config = false
+        $log.info "reloading config file on SIGHUP."
+        begin
+          config = Marinda::LocalConfig.new $options.config_path
+          config.export_debugging_flags()
+          $log.debug "%p", config if $options.verbose
+          @config = config
+        rescue # LocalConfig::MalformedConfigException & YAML exceptions
+          msg = $!.class.name + ": " + $!.to_s
+          $log.err "ERROR: couldn't load new config from '%s': %s; " +
+            "backtrace: %s", $options.config_path, msg,
+            $!.backtrace.join(" <= ")
+        end
+      end
+    end
+  end
+
+
+  def connect_to_global_server
+    begin
+      $log.debug "trying insecure connect_nonblock to gs"
+      sock = @connection.connect
+
+      if sock
+        $log.debug "insecure connect_nonblock to gs succeeded"
+        sock.__connection = @mux
+        # @mux.setup_connection sock
+      else
+        $log.debug "insecure connect_nonblock to gs failed"
+        # reconnect after a delay
+      end
+      
+    # not sure EINTR can be raised by connect_nonblock
+    rescue Errno::EINTR, IO::WaitWritable
+      # do nothing; we'll automatically retry in next select round
+      msg = $!.class.name + ": " + $!.to_s
+      $log.debug "insecure connect_nonblock raised %s", msg
     end
   end
 

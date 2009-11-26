@@ -219,7 +219,7 @@ class LocalConfig < ConfigBase
     import_optional config, "use_judy", TrueClass
 
     # select processing in GlobalSpaceMux
-    import_optional config, "debug_mux_io_select", TrueClass
+    import_optional config, "debug_io_select", TrueClass
 
     # read_data and write_data in GlobalSpaceMux
     import_optional config, "debug_mux_io_bytes", TrueClass
@@ -230,9 +230,6 @@ class LocalConfig < ConfigBase
     # command/request handling in GlobalSpaceMux
     import_optional config, "debug_mux_commands", TrueClass
 
-    # select processing in ClientIO
-    import_optional config, "debug_client_io_select", TrueClass
-
     # read_data and write_data in ClientIO
     import_optional config, "debug_client_io_bytes", TrueClass
 
@@ -242,11 +239,10 @@ class LocalConfig < ConfigBase
 
 
   def export_debugging_flags
-    $debug_mux_io_select = @debug_mux_io_select
+    $debug_io_select = @debug_io_select
     $debug_mux_io_bytes = @debug_mux_io_bytes
     $debug_mux_io_messages = @debug_mux_io_messages
     $debug_mux_commands = @debug_mux_commands
-    $debug_client_io_select = @debug_client_io_select
     $debug_client_io_bytes = @debug_client_io_bytes
     $debug_client_commands = @debug_client_commands
   end

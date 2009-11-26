@@ -33,6 +33,63 @@ require 'openssl'
 
 module Marinda
 
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# A mixin for socket objects for tracking connection state in both the local
+# and global servers.
+#
+# Because Kernel::select only works with IO objects, we need some way of
+# determining what to do with an IO object marked as ready by select.
+# We also need a way of finding the higher-level object associated with
+# a given IO object.
+module ConnectionState
+
+  # Valid states:
+  #
+  #  :connecting = a local server is performing a connect_nonblock to the
+  #               the global server (only applies to the local server)
+  #
+  #  :ssl_connecting = a local server completed connect_nonblock to the
+  #               global server, and we now need to activate SSL with
+  #               SSL#connect_nonblock (only applies to the local server)
+  #
+  #  :listening = server socket is listening for connections, and we need
+  #               to complete accept_nonblock for each incoming connection
+  #
+  #  :accepting = server socket completed accept_nonblock, and we now have a
+  #               client connection that needs to do the SSL accept_nonblock
+  #               (only applies to the global server)
+  #
+  #  :connected = server socket completed accept_nonblock, and we now have a
+  #               client socket that can be used for reading/writing; or
+  #               a server-to-server connection is fully established
+  #
+  #  :defunct = socket disconnected (normally or abnormally), or a new
+  #               connection between the global server and a remote node
+  #               displaced a previous connection
+  #
+  # Non-SSL client connections transition from :listening to :connected
+  # (local and global servers).
+  #
+  # SSL client connections transition from :listening to :accepting to
+  # :connected (global server only).
+  #
+  # A connection from a local server to the global server transitions
+  # from :connecting to :ssl_connecting to :connected.
+  attr_accessor :__connection_state
+
+  # The connection object associated with a given socket.
+  # The value of this attribute depends on __connection_state:
+  #
+  #   :listening => InsecureServerConnection object
+  #   :accepting => AcceptingSSLConnection object
+  #   :connected => SockState object
+  #
+  attr_accessor :__connection
+
+end
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 module SSLSupport
 
   # NOTES:
@@ -91,25 +148,76 @@ end
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 class InsecureClientConnection
 
+ include Socket::Constants
+
+  attr_reader :sock
+  attr_accessor :need_io
+
   def initialize(host, port)
-    @host = host  # IP address or hostname
+    @host = host
     @port = port
+    @sock = nil
+    @sockaddr = nil
+    @need_io = :connect
   end
 
 
-  def open(must_succeed=true)
+  # Usage:
+  #
+  #   Socket#connect_nonblock should raise IO::WaitWritable
+  #   (Errno::EINPROGRESS) on the first call to indicate connect has
+  #   started (SYN sent).  The caller should then wait for the socket to
+  #   become writable and then try the connect_nonblock again.  Although
+  #   not strictly necessary (the writable socket status by itself
+  #   indicates either successful connection or a failure), the second call
+  #   to connect_nonblock allows us to detect connection errors immediately
+  #   rather than at the next read/write attempt.  If the connection
+  #   succeeds on the second call, connect_nonblock raises Errno::EISCONN.
+  #   Otherwise, connect_nonblock raises a connection error like
+  #   Errno::ECONNREFUSED.
+  #
+  #   connect_nonblock should never simply return without raising an
+  #   exception.
+  def connect
     begin
-      retval = TCPSocket.new @host, @port
-      retval.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
-      retval
-    rescue  # TCPSocket.new can raise SystemCallError
-      $log.err "InsecureClientConnection#open failed: %p", $!
-      if must_succeed
-	sleep 60
-	retry
-      else
-	raise
+      # Create the sockaddr here to catch DNS lookup failure.
+      @sockaddr = Socket.sockaddr_in @port, @host unless @sockaddr
+      unless @sock
+        @sock = Socket.new AF_INET, SOCK_STREAM, 0
+        @sock.extend ConnectionState
+        @sock.__connection_state = :connecting
+        # @sock.__connection not used; leave nil
       end
+
+      @sock.connect_nonblock @sockaddr
+
+      fail "INTERNAL ERROR: InsecureClientConnection#connect: " +
+        "connect_nonblock didn't raise an exception"
+
+    # not sure Errno::EINTR is possible
+    rescue Errno::EINTR
+      raise
+
+    rescue IO::WaitWritable
+      @need_io = :write
+      raise
+
+    rescue Errno::EISCONN  # == connection established
+      @need_io = :none
+      @sock.__connection_state = :connected
+      @sock.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+      return @sock
+
+    rescue
+      $log.err "InsecureClientConnection#connect failed: %p", $!
+      @sockaddr = nil
+      if @sock
+        @sock.close rescue nil
+        @sock.__connection_state = :defunct
+        @sock = nil
+      end
+      @need_io = :reconnect
+      return nil
     end
   end
 
@@ -162,45 +270,6 @@ class ClientSSLConnection
 
 end
 
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# A mixin for socket objects for tracking connection state.
-#
-# Because Kernel::select only works with IO objects, we need some way of
-# determining what to do with an IO object marked as ready by select.
-# We also need a way of finding the higher-level object associated with
-# a given IO object.
-module ConnectionState
-
-  # Valid states:
-  #
-  #  :listening = server socket is listening for connections, and we need
-  #               to complete accept_nonblock for each incoming connection
-  #
-  #  :accepting = server socket completed accept_nonblock, and we now have a
-  #               client connection that needs to do the SSL accept_nonblock
-  #
-  #  :connected = server socket completed accept_nonblock, and we now have a
-  #               client socket that can be used for reading/writing
-  #
-  #  :defunct = socket disconnected (normally or abnormally), or a new
-  #               connection between the global server and a remote node
-  #               displaced a previous connection
-  #
-  # Non-SSL connections transition from :listening to :connected.
-  # SSL connections transition from :listening to :accepting to :connected.
-  attr_accessor :__connection_state
-
-  # The connection object associated with a given socket.
-  # The value of this attribute depends on __connection_state:
-  #
-  #   :listening => InsecureServerConnection object
-  #   :accepting => AcceptingSSLConnection object
-  #   :connected => SockState object
-  #
-  attr_accessor :__connection
-
-end
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 class InsecureServerConnection
@@ -360,7 +429,15 @@ class AcceptingSSLConnection
       return @ssl, @node_id
 
     # not sure Errno::EINTR is possible with SSLSocket#accept_nonblock
-    rescue IO::WaitReadable, IO::WaitWritable, Errno::EINTR
+    rescue Errno::EINTR
+      raise
+
+    rescue IO::WaitReadable
+      @need_io = :read
+      raise
+
+    rescue IO::WaitWritable
+      @need_io = :write
       raise
 
     # post_connection_check can raise OpenSSL::SSL::SSLError.
