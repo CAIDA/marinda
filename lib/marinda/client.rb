@@ -73,7 +73,8 @@ class Client
     @protocol = 0
     @remote_banner = nil
     @sock = sock
-    @sock.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+    # XXX `setsockopt': Operation not supported on socket (Errno::EOPNOTSUPP)
+    # @sock.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
     @global_commons_channel = nil  # cached
     @debug = false
   end
