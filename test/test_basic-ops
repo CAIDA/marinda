@@ -101,3 +101,5 @@ test_basic_operations $c, "local commons"
 test_basic_operations $local_123, "local region 123"
 test_basic_operations $g, "global commons"
 test_basic_operations $global_456, "global region 456"
+
+puts "\n\n### SUCCESS."
