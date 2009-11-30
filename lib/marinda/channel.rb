@@ -130,6 +130,7 @@ class Channel
     # only applies to reading, and @write_queue only applies to writing.
     @read_buffer = ReadBuffer.new
     @write_queue = List.new  # [WriteBuffer]
+    @messages = []  # complete raw messages from the client read in read_data
 
     # The code (e.g., WRITE_CMD) and state of the currently running command.
     #
@@ -679,14 +680,14 @@ class Channel
   def read_data
     return unless @sock  # still connected
 
-    messages = []  # list of [payload, file]
+    @messages.clear  # [ [payload, file] ]
     @read_buffer.payload ||= ""
 
     begin
       if @read_buffer.want_io
 	fd = @sock.recv_io
 	raise EOFError, "client protocol error: no file descriptor" unless fd
-	messages << [@read_buffer.payload, fd]
+	@messages << [@read_buffer.payload, fd]
 	@read_buffer.length = nil
 	@read_buffer.payload = ""
 	@read_buffer.want_io = nil
@@ -722,7 +723,7 @@ class Channel
 		end
 		@read_buffer.want_io = true
 	      else
-		messages << [@read_buffer.payload, nil]
+		@messages << [@read_buffer.payload, nil]
 		@read_buffer.length = nil
 		@read_buffer.payload = ""
 	      end
@@ -754,7 +755,7 @@ class Channel
     # in `recv_io': file descriptor was not passed 
     # (msg_controllen : 0 != 16) (SocketError)
     rescue SocketError, IOError, EOFError, SystemCallError
-      if $debug_client_io_bytes || !($! === EOFError)
+      if $debug_client_io_bytes || !$!.kind_of?(EOFError)
         $log.info "Channel#read_data from %p: %p", @sock, $!
       end
 
@@ -763,7 +764,7 @@ class Channel
       reset_connection()  # but don't shutdown yet, since there might be msgs
     end
 
-    messages.each do |payload, file|
+    @messages.each do |payload, file|
       begin
         handle_client_message payload, file
       rescue ChannelPrivilegeError
@@ -809,6 +810,8 @@ class Channel
 	buffer.file = nil
       end
 
+      @write_queue.shift if buffer.payload.length == 0 && buffer.file == nil
+
     rescue Errno::EINTR  # might be raised by write_nonblock
       # do nothing, since we'll automatically retry in the next select() round
 
@@ -816,19 +819,16 @@ class Channel
       # IO::WaitWritable shouldn't normally happen since the socket was
       # ready by the time we performed the write_nonblock; however, a false
       # readiness notification can lead to this exception.
-      $log.info "Channel#write_data from %p: IO::WaitWritable", @sock
+      $log.info "Channel#write_data to %p: IO::WaitWritable", @sock
       # do nothing, since we'll automatically retry in the next select() round
 
     # syswrite may throw "not opened for writing (IOError)";
-    rescue IOError, SystemCallError # including Errno::EPIPE
-      if $debug_client_io_bytes || !($! === Errno::EPIPE)
+    rescue SocketError, IOError, SystemCallError # including Errno::EPIPE
+      if $debug_client_io_bytes || !$!.kind_of?(Errno::EPIPE)
         $log.info "Channel#write_data to %p: %p", @sock, $!
       end
       reset_connection()
       shutdown()
-
-    else
-      @write_queue.shift if buffer.payload.length == 0 && buffer.file == nil
     end
   end
 
