@@ -7,6 +7,11 @@
 ## A Channel object is associated with a pair of public and private regions.
 ##
 ## --------------------------------------------------------------------------
+## The client communication protocol has the following binary format:
+##
+##     [ length | reqnum | command-code | remaining-payload ]
+##
+## --------------------------------------------------------------------------
 ## Copyright (C) 2007, 2008, 2009 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
@@ -53,21 +58,7 @@ class Channel
   READ_SIZE = 8192   # num bytes to read at once with sysread
 
   ReadBuffer = Struct.new :length, :payload, :want_io
-  WriteBuffer = Struct.new :payload, :file, :request
-
-  # SockState contains state for both read and write directions of sockets.
-  # The attribute :read_buffer only applies to reading, and the attribute
-  # :write_queue only applies to writing.
-  class SockState
-    attr_accessor :channel, :read_buffer, :write_queue
-
-    def initialize(channel)
-      @channel = channel
-      @read_buffer = ReadBuffer.new
-      @write_queue = List.new  # [WriteBuffer]
-    end
-  end
-
+  WriteBuffer = Struct.new :payload, :file
 
   OPERATION_TO_COMMAND = {
     :read_all => READ_ALL_CMD, :take_all => TAKE_ALL_CMD,
@@ -115,25 +106,30 @@ class Channel
   # cancelled by the client.
   IterationState = Struct.new :template, :cursor, :request
   
-  attr_reader :alive, :flags, :public_port, :private_port
+  attr_reader :sock, :flags, :public_port, :private_port
 
   private #================================================================
 
-  def initialize(flags, space, public_port, private_port, sock, clientio)
+  def initialize(flags, space, public_port, private_port, sock)
     $log.info "created channel %#x (pubp=%#x, privp=%#x)", object_id,
       public_port, private_port
-    @alive = true   # true if the channel has not shut down
-    @protocol = 0
     @flags = flags  # ChannelFlags
     @flags.is_global = Port.global? public_port
     @flags.is_commons = Port.commons? public_port
     @space = space
+
     @public_port = public_port
     @private_port = private_port
     @peer_port = @public_port
     @address_book = []  # handle - FIRST_USER_HANDLE => private peer port
+
     @sock = sock
-    @clientio = clientio
+    @protocol = 0
+
+    # State for read and write directions of the client socket; @read_buffer
+    # only applies to reading, and @write_queue only applies to writing.
+    @read_buffer = ReadBuffer.new
+    @write_queue = List.new  # [WriteBuffer]
 
     # The code (e.g., WRITE_CMD) and state of the currently running command.
     #
@@ -199,7 +195,7 @@ class Channel
 
   #----------------------------------------------------------------------
 
-  def handle_client_message(sender, payload, fd)
+  def handle_client_message(payload, fd)
     fail_connection unless payload
 
     $log.debug "Channel#handle_client_message: payload=%p",
@@ -461,14 +457,13 @@ class Channel
 
   def cancel(reqnum, command)
     $log.debug "client cancel(%d)", reqnum if $debug_client_commands
-    cancel_active_command
+    cancel_active_command()
     @active_command = nil
   end
 
 
   def create_new_binding(reqnum, command)
     $log.debug "client create_new_binding" if $debug_client_commands
-    @space.create_new_binding self    
     @active_command = [command,
       lambda do |client_sock|
 	if client_sock
@@ -479,12 +474,13 @@ class Channel
 	end
 	@active_command = nil
       end ]
+
+    @space.create_new_binding self    
   end
 
 
   def duplicate_channel(reqnum, command)
     $log.debug "client duplicate_channel" if $debug_client_commands
-    @space.duplicate_channel self
     @active_command = [command,
       lambda do |client_sock|
 	if client_sock
@@ -494,14 +490,13 @@ class Channel
 	end
 	@active_command = nil
       end ]
+
+    @space.duplicate_channel self
   end
 
 
   def create_global_commons_channel(reqnum, command)
     $log.debug "client create_global_commons_channel" if $debug_client_commands
-    flags = ChannelFlags.new
-    flags.allow_commons_privileges!
-    @space.open_port self, flags, Port::COMMONS_PORTNUM, true
     @active_command = [command,
       lambda do |client_sock|
 	if client_sock
@@ -512,6 +507,10 @@ class Channel
 	end
 	@active_command = nil
       end ]
+
+    flags = ChannelFlags.new
+    flags.allow_commons_privileges!
+    @space.open_port self, flags, Port::COMMONS_PORTNUM, true
   end
 
 
@@ -535,8 +534,6 @@ class Channel
     $log.debug "client open_port(%d)", portnum if $debug_client_commands
     fail_privilege unless @flags.can_open_any_port?
 
-    # XXX think some more about what flags should be used in this call
-    @space.open_port self, @flags, portnum, want_global
     @active_command = [command,
       lambda do |client_sock|
 	if client_sock
@@ -546,6 +543,9 @@ class Channel
 	end
 	@active_command = nil
       end ]
+
+    # XXX think some more about what flags should be used in this call
+    @space.open_port self, @flags, portnum, want_global
   end
 
 
@@ -642,7 +642,7 @@ class Channel
     payload = [ reqnum ].pack("C") + values.pack(format)
     length = [ payload.length ].pack "n"
     message = length + payload
-    @clientio.write_message @space, self, @sock, message, fd, nil
+    @write_queue << WriteBuffer[message, fd]
   end
 
 
@@ -661,67 +661,79 @@ class Channel
 
   public #==================================================================
 
-  def read_data(sock)
-    return unless @state    # connection was lost
+  # Called by the select loop in LocalSpace -------------------------------
+
+  def need_io_read
+    @sock != nil
+  end
+
+
+  def need_io_write
+    @sock && !@write_queue.empty?
+  end
+
+
+  # I/O events from LocalSpace --------------------------------------------
+
+  # NOTE: This only works with Unix domain sockets, not general TCP sockets.
+  def read_data
+    return unless @sock  # still connected
 
     messages = []  # list of [payload, file]
-
-    buffer = @state.read_buffer
-    buffer.payload ||= ""
+    @read_buffer.payload ||= ""
 
     begin
-      # NOTE: To prevent blocking, only do 1 recv_io/sysread call per
-      #       read_data() call.
-      if buffer.want_io
-	fd = sock.recv_io
+      if @read_buffer.want_io
+	fd = @sock.recv_io
 	raise EOFError, "client protocol error: no file descriptor" unless fd
-	messages << [buffer.payload, fd]
-	buffer.length = nil
-	buffer.payload = ""
-	buffer.want_io = nil
+	messages << [@read_buffer.payload, fd]
+	@read_buffer.length = nil
+	@read_buffer.payload = ""
+	@read_buffer.want_io = nil
       else
-	data = sock.sysread READ_SIZE
-        $log.debug "client read_data from %p: %p",
-          sock, data if $debug_client_io_bytes
+	data = @sock.read_nonblock READ_SIZE
+        $log.debug "Channel#read_data from %p: %p",
+          @sock, data if $debug_client_io_bytes
 
 	start = 0
 	while start < data.length
 	  data_left = data.length - start
 
-	  desired_length = buffer.length || CLIENT_MESSAGE_LENGTH_SIZE
-	  fill_amount = desired_length - buffer.payload.length
+	  desired_length = @read_buffer.length || CLIENT_MESSAGE_LENGTH_SIZE
+	  fill_amount = desired_length - @read_buffer.payload.length
 	  usable_amount = [fill_amount, data_left].min
 
-	  buffer.payload << data[start, usable_amount]
+	  @read_buffer.payload << data[start, usable_amount]
 	  start += usable_amount
 
 	  if usable_amount == fill_amount
-	    if buffer.length
+	    if @read_buffer.length
               if $debug_client_io_bytes
-                $log.debug "client read_data: buffer.length = %d", buffer.length
-                $log.debug "client read_data: buffer.payload = %p",
-                  buffer.payload
+                $log.debug "Channel#read_data: @read_buffer.length = %d",
+                  @read_buffer.length
+                $log.debug "Channel#read_data: @read_buffer.payload = %p",
+                  @read_buffer.payload
               end
 
-              code = buffer.payload.unpack("CC")[1]
+              code = @read_buffer.payload.unpack("CC")[1]
 	      if code == ChannelMessageCodes::PASS_ACCESS_TO_CMD
 		if data.length - start > 0
 		  raise EOFError, "client protocol error: no file descriptor"
 		end
-		buffer.want_io = true
+		@read_buffer.want_io = true
 	      else
-		messages << [buffer.payload, nil]
-		buffer.length = nil
-		buffer.payload = ""
+		messages << [@read_buffer.payload, nil]
+		@read_buffer.length = nil
+		@read_buffer.payload = ""
 	      end
 	    else
-	      buffer.length = buffer.payload.unpack("n").first
-	      buffer.payload = ""
+	      @read_buffer.length = @read_buffer.payload.unpack("n").first
+	      @read_buffer.payload = ""
               if $debug_client_io_bytes
-                $log.debug "client read_data: message length = %d",
-                  buffer.length
+                $log.debug "Channel#read_data: message length = %d",
+                  @read_buffer.length
               end
-	      if buffer.length == 0
+	      if @read_buffer.length == 0
 		raise EOFError, "client protocol error: message length == 0"
 	      end
 	    end
@@ -729,129 +741,128 @@ class Channel
 	end
       end
 
-      # in `recv_io': file descriptor was not passed 
-      # (msg_controllen : 0 != 16) (SocketError)
+    rescue Errno::EINTR  # might be raised by read_nonblock
+      # do nothing, since we'll automatically retry in the next select() round
+
+    rescue IO::WaitReadable
+      # IO::WaitReadable shouldn't normally happen since the socket was
+      # ready by the time we performed the read_nonblock; however, a false
+      # readiness notification can lead to this exception.
+      $log.info "Channel#read_data from %p: IO::WaitReadable", @sock
+      # do nothing, since we'll automatically retry in the next select() round
+
+    # in `recv_io': file descriptor was not passed 
+    # (msg_controllen : 0 != 16) (SocketError)
     rescue SocketError, IOError, EOFError, SystemCallError
-      $log.info "read_data from %p: %p", sock, $!
-      reset_connection sock
-      messages << [nil, nil]
+      if $debug_client_io_bytes || !($! === EOFError)
+        $log.info "Channel#read_data from %p: %p", @sock, $!
+      end
+
+      # Because we reset the connection on EOF, we don't allow half closing
+      # of sockets.
+      reset_connection()  # but don't shutdown yet, since there might be msgs
     end
 
     messages.each do |payload, file|
-      @space.client_message self, @state.channel, payload, file
+      begin
+        handle_client_message payload, file
+      rescue ChannelPrivilegeError
+        $log.debug "Channel#handle_client_message raised %p", $!
+        reqnum = payload.unpack("C").first
+        send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
+      rescue ChannelError
+        $log.info "Channel#handle_client_message raised %p", $!
+        $log.info "Channel active_command=%p", @active_command
+        shutdown()
+      end
     end
   end
 
 
   # NOTE: This only works with Unix domain sockets, not general TCP sockets.
-  def write_data(sock)
-    return unless @state    # connection was lost
+  def write_data
+    return unless @sock  # still connected
 
-    buffer = @state.write_queue.first
+    buffer = @write_queue.first
 
     begin
-      # NOTE: To prevent blocking, only do 1 syswrite call per write_data().
       if buffer.payload.length > 0
-	n = sock.syswrite buffer.payload
+	n = @sock.write_nonblock buffer.payload
 	data_written = buffer.payload.slice! 0, n
         if $debug_client_io_bytes
-          $log.debug "client write_data to %p: wrote %d bytes, %d left: %p",
-            sock, n, buffer.payload.length, data_written
+          $log.debug "Channel#write_data to %p: wrote %d bytes, %d left: %p",
+            @sock, n, buffer.payload.length, data_written
         end
-      else # buffer.file != nil
-	sock.send_io buffer.file
-        $log.debug "client write_data sent file %p over %p",
-          buffer.file, sock if $debug_client_io_bytes
+      end
 
+      if buffer.payload.length == 0 && buffer.file
+        $log.debug "Channel#write_data passing file %p over %p",
+          buffer.file, @sock if $debug_client_io_bytes
+
+	@sock.send_io buffer.file
+        $log.debug "Channel#write_data sent file %p over %p",
+          buffer.file, @sock if $debug_client_io_bytes
+
+        # XXX Should we close the file here??  Is there a race condition,
+        #     with the client possibly receiving a closed file descriptor?
 	buffer.file.close rescue nil
 	buffer.file = nil
       end
 
-      # syswrite may throw "not opened for writing (IOError)"
+    rescue Errno::EINTR  # might be raised by write_nonblock
+      # do nothing, since we'll automatically retry in the next select() round
+
+    rescue IO::WaitWritable
+      # IO::WaitWritable shouldn't normally happen since the socket was
+      # ready by the time we performed the write_nonblock; however, a false
+      # readiness notification can lead to this exception.
+      $log.info "Channel#write_data from %p: IO::WaitWritable", @sock
+      # do nothing, since we'll automatically retry in the next select() round
+
+    # syswrite may throw "not opened for writing (IOError)";
     rescue IOError, SystemCallError # including Errno::EPIPE
-      $log.info "write_data to %p: %p", sock, $!
-      reset_connection sock
-      @space.message_write_failed self, @state.channel, buffer.request
+      if $debug_client_io_bytes || !($! === Errno::EPIPE)
+        $log.info "Channel#write_data to %p: %p", @sock, $!
+      end
+      reset_connection()
+      shutdown()
 
     else
-      if buffer.payload.length == 0 && buffer.file == nil
-	@state.write_queue.shift
-	@write_set.delete sock if @state.write_queue.empty?
-	@space.message_written self, @state.channel, buffer.request
-      end
+      @write_queue.shift if buffer.payload.length == 0 && buffer.file == nil
     end
   end
 
 
-  def reset_connection(sock)
-    @read_set.delete sock
-    @write_set.delete sock
+  # NOTE: This method shouldn't initiate shutdown, since there may have been
+  #       messages read from the client that must still be processed; that
+  #       is, a call to reset_connection is not necessarily abnormal.  For
+  #       example, a client can perform a series of tuple space write
+  #       operations and then disconnect, and the resulting legitimate EOF
+  #       would trigger a reset_connection.
+  def reset_connection
+    return unless @sock
 
-    # XXX may need to close files and channels being passed to the client
-    @state.write_queue.clear if @state
+    @write_queue.each do |buffer|
+      if buffer.file
+        buffer.file.close rescue nil
+        buffer.file = nil
+      end
+    end
+    @write_queue.clear
 
-    sock.close rescue nil
+    @sock.close rescue nil
+    @sock = nil
   end
 
 
-  # Called by self or LocalSpace.
+  # Called by self on EOF or some I/O error with the client, or by
+  # LocalSpace when shutting down the local server.
   def shutdown
     $log.info "Channel %#x: shutting down", object_id
 
-    cancel_active_command
-    @clientio.remove_client @space, self, @sock
+    cancel_active_command()
     @space.unregister_channel self
-
-    @alive = false
-    @space = nil
-    @public_port = nil
-    @private_port = nil
-    @peer_port = nil
-    @address_book = nil
-    @sock.close rescue nil  # XXX close it here?
-    @sock = nil
-    @clientio = nil
-  end
-
-
-  # NOTE: Because Channel isn't a thread, Channel directly performs an
-  #       operation whenever a message arrives rather than defering the
-  #       execution via internal message queuing.
-  #
-  #       All messages are supposed to be delivered indirectly via
-  #       LocalSpace or GlobalSpace (which are threads) rather than directly
-  #       from the source of the messages (e.g., from ClientIO or Region).
-  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-  # Events from ClientIO ---------------------------------------------------
-
-  def client_message(sender, payload, fd)
-    begin
-      handle_client_message sender, payload, fd
-    rescue ChannelPrivilegeError
-      $log.debug "Channel#client_message: %p", $!
-      reqnum = payload.unpack("C").first
-      send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
-    rescue ChannelError
-      $log.info "Channel#client_message: %p", $!
-      $log.info "Channel#client_message: active_command=%p", @active_command
-      shutdown
-    end
-  end
-
-
-  def message_written(sender, request)
-    # nothing to do
-  end
-
-
-  def message_write_failed(sender, request)
-    # XXX ensure files/channels of all unsent messsages are closed somehow
-    $log.debug "Channel#message_write_failed: shutting down channel %#x",
-      self.object_id
-    $log.debug "Channel#message_write_failed: active_command=%p",
-      @active_command
-    shutdown
+    reset_connection()
   end
 
 
@@ -890,17 +901,17 @@ class Channel
 
   # Events from LocalSpace ------------------------------------------------
 
-  def binding_created(sender, new_channel, client_sock)
+  def binding_created(new_channel, client_sock)
     @active_command[1].call client_sock
   end
 
 
-  def channel_duplicated(sender, new_channel, client_sock)
+  def channel_duplicated(new_channel, client_sock)
     @active_command[1].call client_sock
   end
 
 
-  def port_opened(sender, new_channel, client_sock)
+  def port_opened(new_channel, client_sock)
     @active_command[1].call client_sock
   end
 

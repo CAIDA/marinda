@@ -57,7 +57,7 @@ class LocalSpace
     @config = config
     @server_sock = server_sock
     @server_sock.extend ConnectionState
-    @server_sock.__connection_state = :accepting
+    @server_sock.__connection_state = :listening
     @server_sock.__connection = nil
 
     @node_id = @config.node_id
@@ -97,36 +97,6 @@ class LocalSpace
     @write_set = []
     @readable = nil
     @writable = nil
-
-    @inbox = Queue.new
-
-    @dispatch = {}
-
-    # Events from ClientIO ................................................
-    @dispatch[:client_removed] = method :handle_client_removed
-    @dispatch[:client_message] = method :forward_message
-    @dispatch[:message_written] = method :forward_message
-    @dispatch[:message_write_failed] = method :forward_message
-
-    # Events from GlobalSpaceMux ..........................................
-    @dispatch[:global_private_region_created] =
-      method :handle_global_private_region_created
-    @dispatch[:global_region_pair_created] =
-      method :handle_global_region_pair_created
-    @dispatch[:mux_result] = method :handle_mux_result
-
-    # Events from Channel .................................................
-    @dispatch[:create_new_binding] = method :handle_create_new_binding
-    @dispatch[:duplicate_channel] = method :handle_duplicate_channel
-    @dispatch[:open_port] = method :handle_open_port
-
-    # Events from self .................................................
-    @dispatch[:binding_created] = method :forward_message
-    @dispatch[:channel_duplicated] = method :forward_message
-    @dispatch[:port_opened] = method :forward_message
-
-    # Events from Region ..................................................
-    @dispatch[:region_result] = method :forward_message
   end
 
 
@@ -155,6 +125,13 @@ class LocalSpace
         end
       end
 
+      @channels.each_value do |cs|
+        cs.each do |channel|
+          @read_set << channel.sock if channel.need_io_read
+          @write_set << channel.sock if channel.need_io_write
+        end
+      end
+
       if $debug_io_select
         $log.debug "LocalSpace: waiting for I/O ..."
         $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
@@ -180,12 +157,8 @@ class LocalSpace
               "for readable %p", sock
             fail msg
 
-          when :accepting then handle_client_accept sock
-
-          when :connected
-            # XXX dispatch to the appropriate read_data method
-            read_data sock
-
+          when :listening then handle_incoming_connection()
+          when :connected then sock.__connection.read_data()
           when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
@@ -201,15 +174,12 @@ class LocalSpace
           case sock.__connection_state
           when :connecting then connect_to_global_server()
 
-          when :accepting
-            msg = sprintf "INTERNAL ERROR: __connection_state=:accepting " +
+          when :listening
+            msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
               "for writable %p", sock
             fail msg
 
-          when :connected
-            # XXX dispatch to the appropriate write_data method
-            write_data sock
-
+          when :connected then sock.__connection.write_data()
           when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
@@ -246,6 +216,8 @@ class LocalSpace
   end
 
 
+  private  #.................................................................
+
   def connect_to_global_server
     begin
       $log.debug "trying insecure connect_nonblock to gs"
@@ -269,16 +241,32 @@ class LocalSpace
   end
 
 
-  def handle_add_client(command, sock)
-    flags = ChannelFlags.new
-    flags.allow_commons_privileges!
-    private_port = allocate_private_port
-    @regions[private_port] = Region.new self, private_port
+  def handle_incoming_connection
+    begin
+      sock = @server_sock.accept_nonblock
 
-    channel = Channel.new flags, self, @commons_port, private_port,
-      sock, @clientio
-    @channels[private_port] << channel
-    @clientio.add_client self, channel, sock
+      flags = ChannelFlags.new
+      flags.allow_commons_privileges!
+      private_port = allocate_private_port
+      @regions[private_port] = Region.new self, private_port
+
+      channel = Channel.new flags, self, @commons_port, private_port, sock
+      @channels[private_port] << channel
+
+      # XXX can't set TCP_NODELAY: Errno::EINVAL: Invalid argument
+      # sock.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+
+      sock.extend ConnectionState
+      sock.__connection_state = :connected
+      sock.__connection = channel
+
+    rescue Errno::EWOULDBLOCK, Errno::EINTR  # not sure EINTR is raised
+      # nothing to do; the local server always retries
+
+    rescue
+      $log.err "LocalSpace#handle_incoming_connection: accept_nonblock " +
+        "failed: %p", $!
+    end
   end
 
 
@@ -287,13 +275,8 @@ class LocalSpace
   end
 
 
-  def handle_client_removed(command, sender, channel)
-    # nothing to do
-  end
-
-
-  def forward_message(command, sender, channel, *args)
-    if channel.alive
+  def forward_message(command, channel, *args)
+    if channel.sock
       channel.__send__ command, sender, *args
     else
       $log.info "LocalSpace#forward_message: discarding message %p to " +
@@ -306,108 +289,9 @@ class LocalSpace
 	  new_channel.shutdown
 	  client_sock.close rescue nil
 	end
-
-      when :region_result
-	operation, template, tuple = args
-        case operation
-        when :take, :takep, :take_all, :consume, :consume_stream
-	  if tuple.access_fd
-	    tuple.access_fd.close rescue nil
-	    tuple.access_fd = nil
-	  end
-	  # XXX possibly return tuple into region
-	end
-      end
-    end
-  end
-
-
-  # An event generated by GlobalSpaceMux#create_private_region.
-  def handle_global_private_region_created(command, sender, request_data,
-                                           private_port)
-    request_data.call private_port
-  end
-
-  # An event generated by GlobalSpaceMux#create_region_pair.
-  def handle_global_region_pair_created(command, sender, request_data,
-                                        private_port)
-    request_data.call private_port
-  end
-
-
-  def handle_mux_result(command, port, request, result)
-    if request.channel.alive
-      request.channel.region_result port, request.operation,
-        request.template, result
-    # else XXX possibly return taken tuple into region
-    end
-  end
-
-
-  def handle_create_new_binding(command, channel)
-    flags = channel.flags.privileges
-    public_port = channel.public_port
-    if @mux && Port.global?(public_port)
-      @mux.create_private_region self, lambda { |private_port|
-	result = (private_port ?
-		  create_channel(flags, public_port, private_port) : nil)
-	result ||= [nil, nil]
-	@inbox.enq [:binding_created, self, channel, *result]
-      }
-    else
-      private_port = allocate_private_port
-      result = create_channel flags, public_port, private_port
-      if result
-	@regions[private_port] = Region.new self, private_port
       else
-	result = [nil, nil]
+        fail "INTERNAL ERROR: unhandled operation %p", operation
       end
-      @inbox.enq [:binding_created, self, channel, *result]
-    end
-  end
-
-
-  def handle_duplicate_channel(command, channel)
-    flags = channel.flags.privileges
-    result = create_channel flags, channel.public_port, channel.private_port
-    result ||= [nil, nil]
-    @inbox.enq [:channel_duplicated, self, channel, *result]
-  end
-
-
-  # {portnum} should be a port number (not the full port value).  A zero value
-  # causes the next available port number to be used.
-  #
-  # This opens a public port with this port number in the scope implied by
-  # {want_global}.  The corresponding private port will be created at the
-  # same time.
-  def handle_open_port(command, channel, flags, portnum, want_global)
-    want_global &&= @mux
-
-    if portnum == 0
-      public_port = Port::UNKNOWN
-    else
-      public_port = (want_global ? Port.make_public_global(portnum) :
-		     Port.make_public_local(portnum))
-    end
-
-    if want_global
-      @mux.create_region_pair self, public_port, lambda { |private_port|
-	result = (private_port ?
-		  create_channel(flags, public_port, private_port) : nil)
-	result ||= [nil, nil]
-	@inbox.enq [:port_opened, self, channel, *result]
-      }
-    else
-      private_port = allocate_private_port
-      result = create_channel flags, public_port, private_port
-      if result
-	@regions[public_port] ||= Region.new self, public_port
-	@regions[private_port] = Region.new self, private_port
-      else
-	result = [nil, nil]
-      end
-      @inbox.enq [:port_opened, self, channel, *result]
     end
   end
 
@@ -422,10 +306,17 @@ class LocalSpace
     sockets = UNIXSocket.pair SOCK_STREAM, 0
     return nil unless sockets
 
-    channel = Channel.new flags, self, public_port, private_port,
-      sockets[0], @clientio
+    channel = Channel.new flags, self, public_port, private_port, sockets[0]
     @channels[private_port] << channel
-    @clientio.add_client self, channel, sockets[0]
+
+    # XXX not sure disabling Nagle is required or (universally) supported
+    # sockets[0].setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+    # sockets[1].setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+
+    sockets[0].extend ConnectionState
+    sockets[0].__connection_state = :connected
+    sockets[0].__connection = channel
+
     return channel, sockets[1]
   end
 
@@ -466,61 +357,7 @@ class LocalSpace
   end
 
 
-  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-  def inspect_message(message)
-    body = message.map do |element|
-      case element
-      when String, Numeric, Symbol, TrueClass, FalseClass, NilClass
-	element.inspect
-      else
-	sprintf "#<%s:%#x>", element.class.name, element.object_id
-      end
-    end.join(", ")
-    "[" + body + "]"
-  end
-
-
   public #=================================================================
-
-  def unregister_channel(channel)
-    private_port = channel.private_port
-    @channels[private_port].delete channel
-    if @channels[private_port].empty?
-      @channels.delete private_port
-
-      if @mux && Port.global?(private_port)
-	@mux.delete_private_region self, private_port
-      else
-	private_region = @regions.delete private_port
-	private_region.shutdown
-      end
-    end
-  end
-
-
-  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-  # {service} may be integer, string, or symbol
-  def lookup_service(service)
-    service = service.to_sym if service.kind_of? String
-    @services[service]
-  end
-
-  # {name} may be string or symbol
-  def register_service(name, index, region)
-    name = name.to_sym if name.kind_of? String
-    @services[name] = region
-    @services[index] = region
-  end    
-
-  # {name} may be string or symbol
-  def unregister_service(name, index)
-    name = name.to_sym if name.kind_of? String
-    @services.delete name
-    @services.delete index
-  end
-
 
   # Region proxy methods --------------------------------------------------
 
@@ -605,77 +442,157 @@ class LocalSpace
   end
 
 
-  # Events from LocalServer -----------------------------------------------
-
-  # no response
-  def add_client(sock)
-    @inbox.enq [:add_client, sock]
-  end
-
-  def shutdown
-    @inbox.enq [:shutdown]
-  end
-
-
-  # Events from ClientIO --------------------------------------------------
-
-  def client_removed(sender, channel)
-    @inbox.enq [:client_removed, sender, channel]
-  end
-
-  def client_message(sender, channel, payload, fd)
-    @inbox.enq [:client_message, sender, channel, payload, fd]
-  end
-
-  def message_written(sender, channel, request)
-    @inbox.enq [:message_written, sender, channel, request]
-  end
-
-  def message_write_failed(sender, channel, request)
-    @inbox.enq [:message_write_failed, sender, channel, request]
-  end
-
-
   # Events from GlobalSpaceMux --------------------------------------------
 
-  def global_private_region_created(sender, request_data, private_port)
-    @inbox.enq [:global_private_region_created, sender,
-                request_data, private_port]
+  # An event generated by GlobalSpaceMux#create_private_region.
+  def global_private_region_created(command, sender, request_data, private_port)
+    request_data.call private_port
   end
 
-  def global_region_pair_created(sender, request_data, private_port)
-    @inbox.enq [:global_region_pair_created, sender, request_data, private_port]
+  # An event generated by GlobalSpaceMux#create_region_pair.
+  def global_region_pair_created(command, sender, request_data, private_port)
+    request_data.call private_port
   end
 
-  def mux_result(port, request, result)
-    @inbox.enq [:mux_result, port, request, result]
+
+  def mux_result(command, port, request, result)
+    if request.channel.sock
+      request.channel.region_result port, request.operation,
+        request.template, result
+    # else XXX possibly return taken tuple into region
+    end
   end
+
 
   # Events from Channel ---------------------------------------------------
 
-  # response: [:binding_created, LocalSpace#self, new_channel, client_sock]
-  #           where new_channel and client_sock will be nil on error
   def create_new_binding(channel)
-    @inbox.enq [:create_new_binding, channel]
+    flags = channel.flags.privileges
+    public_port = channel.public_port
+    if @mux && Port.global?(public_port)
+      @mux.create_private_region self, lambda { |private_port|
+	result = (private_port ?
+		  create_channel(flags, public_port, private_port) : nil)
+	result ||= [nil, nil]
+        forward_message :binding_created, channel, *result
+      }
+    else
+      private_port = allocate_private_port()
+      result = create_channel flags, public_port, private_port
+      if result
+	@regions[private_port] = Region.new self, private_port
+      else
+	result = [nil, nil]
+      end
+      channel.binding_created *result
+    end
   end
 
-  # response: [:channel_duplicated, LocalSpace#self, new_channel, client_sock]
-  #           where new_channel and client_sock will be nil on error
+
   def duplicate_channel(channel)
-    @inbox.enq [:duplicate_channel, channel]
+    flags = channel.flags.privileges
+    result = create_channel flags, channel.public_port, channel.private_port
+    result ||= [nil, nil]
+    forward_message :channel_duplicated, channel, *result
   end
 
-  # response: [:port_opened, LocalSpace#self, new_channel, client_sock]
-  #           where new_channel and client_sock will be nil on error
+
+  # {portnum} should be a port number (not the full port value).  A zero value
+  # causes the next available port number to be used.
+  #
+  # This opens a public port with this port number in the scope implied by
+  # {want_global}.  The corresponding private port will be created at the
+  # same time.
   def open_port(channel, flags, portnum, want_global)
-    @inbox.enq [:open_port, channel, flags, portnum, want_global]
+    want_global &&= @mux
+
+    if portnum == 0
+      public_port = Port::UNKNOWN
+    else
+      public_port = (want_global ? Port.make_public_global(portnum) :
+		     Port.make_public_local(portnum))
+    end
+
+    if want_global
+      @mux.create_region_pair self, public_port, lambda { |private_port|
+	result = (private_port ?
+		  create_channel(flags, public_port, private_port) : nil)
+	result ||= [nil, nil]
+        forward_message :port_opened, channel, *result
+      }
+    else
+      private_port = allocate_private_port()
+      result = create_channel flags, public_port, private_port
+      if result
+	@regions[public_port] ||= Region.new self, public_port
+	@regions[private_port] = Region.new self, private_port
+      else
+	result = [nil, nil]
+      end
+      channel.port_opened *result
+    end
+  end
+
+
+  def unregister_channel(channel)
+    private_port = channel.private_port
+    @channels[private_port].delete channel
+    if @channels[private_port].empty?
+      @channels.delete private_port
+
+      if @mux && Port.global?(private_port)
+	@mux.delete_private_region self, private_port
+      else
+	private_region = @regions.delete private_port
+	private_region.shutdown
+      end
+    end
+  end
+
+
+  # {service} may be integer, string, or symbol
+  def lookup_service(service)
+    service = service.to_sym if service.kind_of? String
+    @services[service]
+  end
+
+  # {name} may be string or symbol
+  def register_service(name, index, region)
+    name = name.to_sym if name.kind_of? String
+    @services[name] = region
+    @services[index] = region
+  end    
+
+  # {name} may be string or symbol
+  def unregister_service(name, index)
+    name = name.to_sym if name.kind_of? String
+    @services.delete name
+    @services.delete index
   end
 
 
   # Events from Region ---------------------------------------------------
 
+  # Note: We could simply use forward_message, but inlining
+  #       channel.region_result call might be faster.
   def region_result(port, channel, operation, template, tuple)
-    @inbox.enq [:region_result, port, channel, operation, template, tuple]
+    if channel.sock
+      channel.region_result port, operation, template, tuple
+    else
+      $log.info "LocalSpace#region_result: discarding message to " +
+        "dead channel %#x\n", channel.object_id
+
+      case operation
+      when :take, :takep, :take_all, :consume, :consume_stream
+        if tuple.access_fd
+          tuple.access_fd.close rescue nil
+          tuple.access_fd = nil
+        end
+        # XXX possibly return tuple into region
+      else
+        fail "INTERNAL ERROR: unhandled operation %p", operation
+      end
+    end
   end
 
 end
