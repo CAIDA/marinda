@@ -49,6 +49,26 @@ class Channel
   CVS_ID = "$Id: channel.rb,v 1.45 2009/03/16 23:33:59 youngh Exp $"
   PEER_HANDLE_MAX = 2**31 - 1   # max value storable with Array#pack("N")
 
+  CLIENT_MESSAGE_LENGTH_SIZE = 2  # num bytes in length field of client msg
+  READ_SIZE = 8192   # num bytes to read at once with sysread
+
+  ReadBuffer = Struct.new :length, :payload, :want_io
+  WriteBuffer = Struct.new :payload, :file, :request
+
+  # SockState contains state for both read and write directions of sockets.
+  # The attribute :read_buffer only applies to reading, and the attribute
+  # :write_queue only applies to writing.
+  class SockState
+    attr_accessor :channel, :read_buffer, :write_queue
+
+    def initialize(channel)
+      @channel = channel
+      @read_buffer = ReadBuffer.new
+      @write_queue = List.new  # [WriteBuffer]
+    end
+  end
+
+
   OPERATION_TO_COMMAND = {
     :read_all => READ_ALL_CMD, :take_all => TAKE_ALL_CMD,
     :monitor => MONITOR_CMD, :consume => CONSUME_CMD,
@@ -640,6 +660,139 @@ class Channel
 
 
   public #==================================================================
+
+  def read_data(sock)
+    return unless @state    # connection was lost
+
+    messages = []  # list of [payload, file]
+
+    buffer = @state.read_buffer
+    buffer.payload ||= ""
+
+    begin
+      # NOTE: To prevent blocking, only do 1 recv_io/sysread call per
+      #       read_data() call.
+      if buffer.want_io
+	fd = sock.recv_io
+	raise EOFError, "client protocol error: no file descriptor" unless fd
+	messages << [buffer.payload, fd]
+	buffer.length = nil
+	buffer.payload = ""
+	buffer.want_io = nil
+      else
+	data = sock.sysread READ_SIZE
+        $log.debug "client read_data from %p: %p",
+          sock, data if $debug_client_io_bytes
+
+	start = 0
+	while start < data.length
+	  data_left = data.length - start
+
+	  desired_length = buffer.length || CLIENT_MESSAGE_LENGTH_SIZE
+	  fill_amount = desired_length - buffer.payload.length
+	  usable_amount = [fill_amount, data_left].min
+
+	  buffer.payload << data[start, usable_amount]
+	  start += usable_amount
+
+	  if usable_amount == fill_amount
+	    if buffer.length
+              if $debug_client_io_bytes
+                $log.debug "client read_data: buffer.length = %d", buffer.length
+                $log.debug "client read_data: buffer.payload = %p",
+                  buffer.payload
+              end
+
+              code = buffer.payload.unpack("CC")[1]
+	      if code == ChannelMessageCodes::PASS_ACCESS_TO_CMD
+		if data.length - start > 0
+		  raise EOFError, "client protocol error: no file descriptor"
+		end
+		buffer.want_io = true
+	      else
+		messages << [buffer.payload, nil]
+		buffer.length = nil
+		buffer.payload = ""
+	      end
+	    else
+	      buffer.length = buffer.payload.unpack("n").first
+	      buffer.payload = ""
+              if $debug_client_io_bytes
+                $log.debug "client read_data: message length = %d",
+                  buffer.length
+              end
+	      if buffer.length == 0
+		raise EOFError, "client protocol error: message length == 0"
+	      end
+	    end
+	  end
+	end
+      end
+
+      # in `recv_io': file descriptor was not passed 
+      # (msg_controllen : 0 != 16) (SocketError)
+    rescue SocketError, IOError, EOFError, SystemCallError
+      $log.info "read_data from %p: %p", sock, $!
+      reset_connection sock
+      messages << [nil, nil]
+    end
+
+    messages.each do |payload, file|
+      @space.client_message self, @state.channel, payload, file
+    end
+  end
+
+
+  # NOTE: This only works with Unix domain sockets, not general TCP sockets.
+  def write_data(sock)
+    return unless @state    # connection was lost
+
+    buffer = @state.write_queue.first
+
+    begin
+      # NOTE: To prevent blocking, only do 1 syswrite call per write_data().
+      if buffer.payload.length > 0
+	n = sock.syswrite buffer.payload
+	data_written = buffer.payload.slice! 0, n
+        if $debug_client_io_bytes
+          $log.debug "client write_data to %p: wrote %d bytes, %d left: %p",
+            sock, n, buffer.payload.length, data_written
+        end
+      else # buffer.file != nil
+	sock.send_io buffer.file
+        $log.debug "client write_data sent file %p over %p",
+          buffer.file, sock if $debug_client_io_bytes
+
+	buffer.file.close rescue nil
+	buffer.file = nil
+      end
+
+      # syswrite may throw "not opened for writing (IOError)"
+    rescue IOError, SystemCallError # including Errno::EPIPE
+      $log.info "write_data to %p: %p", sock, $!
+      reset_connection sock
+      @space.message_write_failed self, @state.channel, buffer.request
+
+    else
+      if buffer.payload.length == 0 && buffer.file == nil
+	@state.write_queue.shift
+	@write_set.delete sock if @state.write_queue.empty?
+	@space.message_written self, @state.channel, buffer.request
+      end
+    end
+  end
+
+
+  def reset_connection(sock)
+    @read_set.delete sock
+    @write_set.delete sock
+
+    # XXX may need to close files and channels being passed to the client
+    @state.write_queue.clear if @state
+
+    sock.close rescue nil
+  end
+
 
   # Called by self or LocalSpace.
   def shutdown
