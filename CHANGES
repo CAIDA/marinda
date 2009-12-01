@@ -1,8 +1,10 @@
-version 0.9.1, 2009-11-30
+version 0.9.1, 2009-12-01
+  * marinda-ls: fixed Ruby 1.9.x incompatibility that could cause a crash
+  * marinda-gs: changed to not use SSL for a local server on 127.0.0.1
   * added support for RJudy (Ruby binding to Judy arrays), which significantly
     speeds up tuple space operations
   * added benchmarking script
-  * fixed marinda-gs to load new config on SIGHUP
+  * marinda-gs: fixed to load new config on SIGHUP
   * added migrate-checkpoints to deal with incompatible checkpoints between
     Ruby 1.8.x and 1.9.x
 
@@ -17,8 +19,8 @@ version 0.9.0, 2009-11-19
   * disabled Nagle
   * BasicSocket.do_not_reverse_lookup is now true
   * marinda-gs removes the lock file after checkpoint-and-exit
-  * fixed Ruby 1.9.2 preview 2 compatibility
-  * fixed Ruby 1.9.x compatibility (e.g., string handling and syntax)
+  * fixed Ruby 1.9.2 preview 2 incompatibility
+  * fixed Ruby 1.9.x incompatibility (e.g., string handling and syntax)
   * switched from sqlite3-ruby to Amalgalite (only affects global server)
 
 version 0.8.0, 2009-03-16

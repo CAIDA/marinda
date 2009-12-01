@@ -419,22 +419,26 @@ class GlobalSpaceMux
     return unless message || response_code == HELLO_RESP
 
     unless response_code == HELLO_RESP
-      if message.command == MONITOR_STREAM_CMD ||
-         message.command == CONSUME_STREAM_CMD
-        reqnum = @request_seqnum[message.request.object_id]
-      else
-        # The cancellation message has a pointer to the same request object as
-        # the message being cancelled, so the following removes the request
-        # seqnum mapping for "both" messages at once.
+      # We don't delete the request seqnum mapping for stream operations
+      # because stream operations remain in place in the global server
+      # until explicitly cancelled.  All other operations (singleton and
+      # iteration) must re-instate a request each time/iteration.
+      unless message.command == MONITOR_STREAM_CMD ||
+          message.command == CONSUME_STREAM_CMD
+        # The cancellation message has a pointer to the same request object
+        # as the message being cancelled, so the following removes the
+        # request seqnum mapping for "both" messages at once.
         reqnum = @request_seqnum.delete message.request.object_id
-      end
 
-      if message.command == CANCEL_CMD
-        cancelled_message = @ongoing_requests.delete reqnum
-        unless cancelled_message
-          $log.notice "GlobalSpaceMux#demux_response: no Message found in " +
-            "@ongoing_requests for cancelled operation with request " +
-            "seqnum %d", reqnum
+        # {reqnum} can be nil if a client disconnects abruptly between
+        # sending a command and receiving a response.
+        if reqnum && message.command == CANCEL_CMD
+          cancelled_message = @ongoing_requests.delete reqnum
+          unless cancelled_message
+            $log.notice "GlobalSpaceMux#demux_response: no Message found in " +
+              "@ongoing_requests for cancelled operation with request " +
+              "seqnum %d", reqnum
+          end
         end
       end
     end
