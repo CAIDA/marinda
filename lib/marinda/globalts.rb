@@ -533,7 +533,7 @@ class GlobalSpace
       @server_connection.accept_with_whitelist @config.nodes
 
     if client_sock
-      if @config.use_ssl
+      if @config.use_ssl && peer_ip != "127.0.0.1"
         conn = AcceptingSSLConnection.new client_sock, peer_ip, node_id
         @accepting_connections << conn
       else
