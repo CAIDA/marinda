@@ -244,7 +244,7 @@ class LocalSpace
         $log.debug "insecure connect_nonblock to gs failed"
         # reconnect after a delay
       end
-      
+
     # not sure EINTR can be raised by connect_nonblock
     rescue Errno::EINTR, IO::WaitWritable
       # do nothing; we'll automatically retry in next select round
@@ -574,7 +574,7 @@ class LocalSpace
     name = name.to_sym if name.kind_of? String
     @services[name] = region
     @services[index] = region
-  end    
+  end
 
   # {name} may be string or symbol
   def unregister_service(name, index)

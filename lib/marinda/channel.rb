@@ -476,7 +476,7 @@ class Channel
 	@active_command = nil
       end ]
 
-    @space.create_new_binding self    
+    @space.create_new_binding self
   end
 
 
@@ -752,7 +752,7 @@ class Channel
       $log.info "Channel#read_data from %p: IO::WaitReadable", @sock
       # do nothing, since we'll automatically retry in the next select() round
 
-    # in `recv_io': file descriptor was not passed 
+    # in `recv_io': file descriptor was not passed
     # (msg_controllen : 0 != 16) (SocketError)
     rescue SocketError, IOError, EOFError, SystemCallError
       if $debug_client_io_bytes || !$!.kind_of?(EOFError)

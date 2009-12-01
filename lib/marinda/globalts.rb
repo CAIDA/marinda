@@ -601,7 +601,7 @@ class GlobalSpace
       # accepting again, so clean up.
       @accepting_connections.delete conn
       setup_connection ssl, node_id if ssl
-      
+
     # not sure EINTR can be raised by SSL accept
     rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable
       # do nothing; we'll automatically retry in next select round
@@ -1295,7 +1295,7 @@ class GlobalSpace
       @services[name] = region
       @services[index] = region
     end
-  end    
+  end
 
   # {name} may be string or symbol
   def unregister_service(name, index)
