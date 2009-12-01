@@ -17,7 +17,7 @@ candidates.concat MY_EXTRA_FILES
 
 MY_FILES = candidates.delete_if do |item|
   item.include?("CVS") || item.include?("rdoc") || item =~ /\~$/ ||
-    File.directory?(item)
+    item.include?("test/setup") || File.directory?(item)
 end
 
 #---------------------------------------------------------------------------
