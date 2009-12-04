@@ -105,6 +105,9 @@ class GlobalSpaceMux
     # This must be > 0, since a seqnum of 0 is used by GlobalSpaceMux and
     # GlobalSpaceDemux to mean that no messages have ever been received
     # from each other.
+    #
+    # NOTE: You must access this only under @inbox.synchronize because both
+    #       the LocalSpace and GlobalSpaceMux threads can access this.
     @seqnum = 1
 
     # The highest sequence number ever observed in messages received from
@@ -137,10 +140,15 @@ class GlobalSpaceMux
     # in the global server.
     #
     # (RegionRequest || GlobalSpaceRequest).object_id => seqnum
+    #
+    # NOTE: You must access this only under @inbox.synchronize because both
+    #       the LocalSpace and GlobalSpaceMux threads can access this.
     @request_seqnum = Hash.new  
 
     #.....................................................................
 
+    # Hack: Also use @inbox for general thread synchronization needs
+    #       between the LocalSpace and GlobalSpaceMux threads.
     @inbox = List.new
     @inbox.extend MonitorMixin
 
@@ -428,7 +436,10 @@ class GlobalSpaceMux
         # The cancellation message has a pointer to the same request object
         # as the message being cancelled, so the following removes the
         # request seqnum mapping for "both" messages at once.
-        reqnum = @request_seqnum.delete message.request.object_id
+        reqnum = nil
+        @inbox.synchronize do
+          reqnum = @request_seqnum.delete message.request.object_id
+        end
 
         # {reqnum} can be nil if a client disconnects abruptly between
         # sending a command and receiving a response.
@@ -547,7 +558,10 @@ class GlobalSpaceMux
 
   def enq_cancel(recipient, request)
     command = CANCEL_CMD
-    mux_seqnum = @request_seqnum[request.object_id]
+    mux_seqnum = nil
+    @inbox.synchronize do
+      mux_seqnum = @request_seqnum[request.object_id]
+    end
     if mux_seqnum
       contents = [ command, recipient, mux_seqnum ].pack("Cww")
       enq_message command, contents, request
@@ -590,19 +604,27 @@ class GlobalSpaceMux
   end
 
 
-  def enq_message(command, contents, request=nil)
-    # Don't overwrite the request-to-seqnum mapping if it already exists.
-    # The only time a request will be re-used is to cancel a previously
-    # sent request, and the cancellation request itself can't be cancelled.
-    @request_seqnum[request.object_id] ||= @seqnum if request
+  #--------------------------------------------------------------------------
 
-    message = Message.new @seqnum, command, contents, request
-    @seqnum += 1
-    enqueue_event :write_message, message
+  def enq_message(command, contents, request=nil)
+    # For efficiency, this method inlines the relevant parts of enqueue_event.
+    @inbox.synchronize do
+      # Don't overwrite the request-to-seqnum mapping if it already exists.
+      # The only time a request will be re-used is to cancel a previously
+      # sent request, and the cancellation request itself can't be cancelled.
+      @request_seqnum[request.object_id] ||= @seqnum if request
+
+      message = Message.new @seqnum, command, contents, request
+      @seqnum += 1
+
+      @inbox << message
+    end
+
+    @control_write.synchronize do
+      @control_write.send "M", 0
+    end
   end
 
-
-  #--------------------------------------------------------------------------
 
   def enqueue_event(*message)
     @inbox.synchronize do
