@@ -617,7 +617,7 @@ class GlobalSpaceMux
       message = Message.new @seqnum, command, contents, request
       @seqnum += 1
 
-      @inbox << message
+      @inbox << [:write_message, message]
     end
 
     @control_write.synchronize do
