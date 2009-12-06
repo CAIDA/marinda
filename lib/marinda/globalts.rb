@@ -443,9 +443,6 @@ class GlobalSpace
         @readable.each do |sock|
           $log.debug "readable %p", sock if $debug_io_select
           case sock.__connection_state
-          when :listening then handle_incoming_connection()
-          when :accepting then handle_ssl_accept sock
-
           when :connected
             if sock.__connection.ssl_io == :write_needs_readable
               sock.__connection.ssl_io = nil
@@ -453,7 +450,8 @@ class GlobalSpace
             else
               read_data sock
             end
-
+          when :listening then handle_incoming_connection()
+          when :accepting then handle_ssl_accept sock
           when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
@@ -467,13 +465,6 @@ class GlobalSpace
         @writable.each do |sock|
           $log.debug "writable %p", sock if $debug_io_select
           case sock.__connection_state
-          when :listening
-            msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
-              "for writable %p", sock
-            fail msg
-
-          when :accepting then handle_ssl_accept sock
-
           when :connected
             if sock.__connection.ssl_io == :read_needs_writable
               sock.__connection.ssl_io = nil
@@ -481,8 +472,12 @@ class GlobalSpace
             else
               write_data sock
             end
-
+          when :accepting then handle_ssl_accept sock
           when :defunct  # nothing to do
+          when :listening
+            msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
+              "for writable %p", sock
+            fail msg
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
               "for writable %p", sock.__connection_state, sock
