@@ -133,11 +133,13 @@ class LocalSpace
             if @connection.need_io == :write
               @write_set << @connection.sock
             elsif @ssl_connection  # just an optimization to speed up attempt
-              @read_set << @ssl_connection.sock
+              @write_set << @ssl_connection.sock
             end
 
           when :write  # waiting for connect_nonblock to finish
             @write_set << @connection.sock
+
+          when :reconnect # XXX
 
           else
             fail "INTERNAL ERROR: unhandled @connection.need_io=%p",
@@ -240,10 +242,10 @@ class LocalSpace
 
   def connect_to_global_server
     begin
-      $log.info "trying to open non-SSL connection to global server"
+      $log.info "trying to connect to global server %s", @config.demux_addr
       sock = @connection.connect
       if sock
-        $log.info "opened non-SSL connection to global server"
+        $log.info "opened connection to global server %s", @config.demux_addr
         if @config.use_ssl
           @ssl_connection = Marinda::ClientSSLConnection.new @config.demux_addr,
             sock
@@ -252,7 +254,7 @@ class LocalSpace
           @mux.setup_connection sock
         end
       else
-        $log.debug "non-SSL connect_nonblock to gs failed"
+        $log.debug "non-SSL connect_nonblock to global server failed"
         # reconnect after a delay
       end
 
@@ -268,7 +270,7 @@ class LocalSpace
 
   def establish_ssl_connection
     begin
-      $log.info "trying to establish SSL connection with global server"
+      $log.info "trying to establish SSL with global server"
       sock = @ssl_connection.connect
       if sock
         $log.info "established SSL connection with global server"
@@ -276,7 +278,7 @@ class LocalSpace
         @mux.setup_connection sock
         @ssl_connection = nil
       else
-        $log.debug "SSL connect_nonblock to gs failed"
+        $log.debug "SSL connect_nonblock to global server failed"
         # XXX reconnect after a delay
       end
 

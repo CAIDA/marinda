@@ -250,7 +250,7 @@ class ClientSSLConnection
     @client_sock.__connection = self
 
     @ssl = nil  # SSLSocket wrapping @client_sock
-    @need_io = :read
+    @need_io = :write
   end
 
 
@@ -272,10 +272,6 @@ class ClientSSLConnection
       @ssl.extend ConnectionState
       @ssl.__connection_state = :connected
       @ssl.__connection = nil  # will be set later by caller
-
-      peer_ip = @ssl.peeraddr[3]
-      $log.info "ClientSSLConnection#connect: opened SSL connection to %s (%s)",
-        @host, peer_ip
 
       @ssl.post_connection_check @host  # check server DNS name
       return @ssl
@@ -384,7 +380,6 @@ class InsecureServerConnection
       # Note: peeraddr() can raise Errno::EINVAL if the remote end closes
       #       the socket (see getpeername(2)).
       peer_ip = client_sock.peeraddr[3]
-
       node_id = nodes[peer_ip]
       if node_id
         $log.info "InsecureServerConnection#accept_with_whitelist: " +
@@ -416,13 +411,15 @@ end
 #       prior to calling accept.
 class AcceptingSSLConnection
 
-  @@check_client_name = true
   @@context = nil
+  @@check_client_name = nil
 
   self.extend SSLSupport
 
-  def self.set_ssl_context(cert_file, key_file, ca_file, ca_path)
+  def self.set_ssl_context(cert_file, key_file, ca_file, ca_path,
+                           check_client_name)
     @@context = create_ssl_context cert_file, key_file, ca_file, ca_path
+    @@check_client_name = check_client_name
   end
 
   #........................................................................
