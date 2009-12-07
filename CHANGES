@@ -1,3 +1,17 @@
+version 0.10.0, 2009-12-07
+  * marinda-ls: now single-threaded and uses nonblocking I/O (including
+    for SSL)
+    - this fixes a race condition in the old multi-threaded version that
+      could cause tuples to be lost
+  * both marinda-ls and marinda-gs will work on Ruby versions older than
+    Ruby 1.9.2 preview 2 if the user has installed Tony Arcieri's
+    openssl-nonblock gem (currently, v0.2.0 with my patches to make it
+    more compatible with Ruby 1.9.2 preview 2)
+  * marinda-ls: can now disable server name check in SSL cert validation
+    with check_server_name config item
+  * marinda-ls: now deletes the server Unix socket on clean exit
+  * marinda-gs and marinda-ls: improved descriptiveness of syslog messages
+
 version 0.9.1, 2009-12-01
   * marinda-ls: fixed Ruby 1.9.x incompatibility that could cause a crash
   * marinda-gs: changed to not use SSL for a local server on 127.0.0.1
