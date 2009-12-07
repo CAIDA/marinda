@@ -185,6 +185,7 @@ begin
   $log.info "waiting for clients on %s", config.socket
   space = Marinda::LocalSpace.new config, server_sock
   space.execute  # returns on exit request triggered by a signal
+  File.delete config.socket
 
 rescue
   short_msg = $!.class.name + ": " + $!.to_s
