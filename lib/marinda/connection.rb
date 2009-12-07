@@ -201,7 +201,10 @@ class InsecureClientConnection
     rescue Errno::EINTR
       raise
 
-    rescue IO::WaitWritable
+    # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
+    # plain Errno::EINPROGRESS, so technically we could get rid of
+    # IO::WaitWritable.
+    rescue Errno::EINPROGRESS, IO::WaitWritable
       @need_io = :write
       raise
 

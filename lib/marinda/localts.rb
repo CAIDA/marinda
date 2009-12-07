@@ -272,8 +272,11 @@ class LocalSpace
       end
 
     # not sure EINTR can be raised by connect_nonblock;
-    # IO::WaitReadable is never raised
-    rescue Errno::EINTR, IO::WaitWritable
+    # IO::WaitReadable is never raised.
+    # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
+    # plain Errno::EINPROGRESS, so technically we could get rid of
+    # IO::WaitWritable.
+    rescue Errno::EINTR, Errno::EINPROGRESS, IO::WaitWritable
       # do nothing; we'll automatically retry in next select round
       if $debug_io_select
         msg = $!.class.name + ": " + $!.to_s

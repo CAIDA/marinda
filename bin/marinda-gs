@@ -41,6 +41,12 @@ require 'marinda/config'
 require 'marinda/globalts'
 require 'marinda/connection'
 
+# Compatibility for Ruby versions before 1.9.2 preview 2.
+class IO
+  module WaitReadable; end
+  module WaitWritable; end
+end
+
 Thread.abort_on_exception = true
 BasicSocket.do_not_reverse_lookup = true
 

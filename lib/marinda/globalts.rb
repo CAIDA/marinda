@@ -664,7 +664,10 @@ class GlobalSpace
     rescue Errno::EINTR  # might be raised by read_nonblock
       # do nothing, since we'll automatically retry in the next select() round
 
-    rescue IO::WaitReadable
+    # Ruby 1.9.2 preview 2 uses IO::WaitReadable, but earlier versions use
+    # plain Errno::EWOULDBLOCK, so technically we could get rid of
+    # IO::WaitReadable.  However, we need IO::WaitReadable for SSL.
+    rescue Errno::EWOULDBLOCK, IO::WaitReadable
       $log.debug "read_data from %p (node %d): IO::WaitReadable",
         sock, state.context.node_id if $debug_io_bytes
       # do nothing, since we'll automatically retry in the next select() round
@@ -735,7 +738,10 @@ class GlobalSpace
         "IO::WaitReadable", sock, state.context.node_id
       state.ssl_io = :write_needs_readable
 
-    rescue IO::WaitWritable
+    # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
+    # plain Errno::EWOULDBLOCK, so technically we could get rid of
+    # IO::WaitWritable.  However, we need IO::WaitWritable for SSL.
+    rescue Errno::EWOULDBLOCK, IO::WaitWritable
       $log.debug "write_data from %p (node %d): IO::WaitWritable",
         sock, state.context.node_id if $debug_io_bytes
       # do nothing, since we'll automatically retry in the next select() round

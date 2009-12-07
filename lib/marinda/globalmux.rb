@@ -532,7 +532,10 @@ class GlobalSpaceMux
     rescue Errno::EINTR  # might be raised by read_nonblock
       # do nothing, since we'll automatically retry in the next select() round
 
-    rescue IO::WaitReadable
+    # Ruby 1.9.2 preview 2 uses IO::WaitReadable, but earlier versions use
+    # plain Errno::EWOULDBLOCK, so technically we could get rid of
+    # IO::WaitReadable.  However, we need IO::WaitReadable for SSL.
+    rescue Errno::EWOULDBLOCK, IO::WaitReadable
       # IO::WaitReadable shouldn't normally happen since the socket was
       # ready by the time we performed the read_nonblock; however, a false
       # readiness notification can lead to this exception.
@@ -573,7 +576,10 @@ class GlobalSpaceMux
     rescue Errno::EINTR  # might be raised by write_nonblock
       # do nothing, since we'll automatically retry in the next select() round
 
-    rescue IO::WaitWritable
+    # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
+    # plain Errno::EWOULDBLOCK, so technically we could get rid of
+    # IO::WaitWritable.  However, we need IO::WaitWritable for SSL.
+    rescue Errno::EWOULDBLOCK, IO::WaitWritable
       # IO::WaitWritable shouldn't normally happen since the socket was
       # ready by the time we performed the write_nonblock; however, a false
       # readiness notification can lead to this exception.
