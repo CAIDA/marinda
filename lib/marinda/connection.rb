@@ -212,16 +212,24 @@ class InsecureClientConnection
       return @sock
 
     rescue
-      $log.err "InsecureClientConnection#connect failed: %p", $!
-      @sockaddr = nil
-      if @sock
-        @sock.close rescue nil
-        @sock.__connection_state = :defunct
-        @sock = nil
-      end
-      @need_io = :reconnect
+      $log.err "couldn't open connection to global server: %p", $!
+
+      # Reset the attributes of this object so that the caller may simply
+      # call #connect (after a delay) to retry connecting.
+      reset()
       return nil
     end
+  end
+
+
+  def reset
+    if @sock
+      @sock.close rescue nil
+      @sock.__connection_state = :defunct
+      @sock = nil
+    end
+    @sockaddr = nil
+    @need_io = :connect
   end
 
 end
@@ -295,7 +303,7 @@ class ClientSSLConnection
 
     # post_connection_check can raise OpenSSL::SSL::SSLError.
     rescue
-      $log.err "ClientSSLConnection#connect failed: %p", $!
+      $log.err "couldn't establish SSL with global server: %p", $!
       @ssl.close rescue nil if @ssl
       @ssl = nil
       @client_sock.close rescue nil
@@ -401,8 +409,9 @@ class InsecureServerConnection
       # The global server always retries, so no need to pass out an exception
       # telling it to retry.
       return nil
+
     rescue
-      $log.err "InsecureServerConnection#accept_with_whitelist failed: %p", $!
+      $log.err "couldn't perform accept() on server socket: %p", $!
       client_sock.close rescue nil if client_sock
       return nil
     end
@@ -481,7 +490,7 @@ class AcceptingSSLConnection
 
     # post_connection_check can raise OpenSSL::SSL::SSLError.
     rescue
-      $log.err "ServerSSLConnection#accept failed: %p", $!
+      $log.err "couldn't establish SSL with client: %p", $!
       @ssl.close rescue nil if @ssl
       @ssl = nil
       @client_sock.close rescue nil

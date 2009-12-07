@@ -593,7 +593,7 @@ class GlobalSpaceMux
   def reset_connection
     return unless @sock
 
-    @sock.close rescue nil
+    @sock.close rescue nil if @sock
     @sock = nil
     @read_buffer = ReadBuffer.new
     @write_queue.clear

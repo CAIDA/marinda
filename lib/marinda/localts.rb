@@ -52,6 +52,8 @@ class LocalSpace
   include Socket::Constants
 
   TIMEOUT = 5 # seconds of timeout for select
+  RECONNECT_DELAY = 60 # seconds between attempts to connect to global server
+  RECONNECT_JITTER = 30 # seconds of random jitter added to delay
 
   def initialize(config, server_sock)
     @config = config
@@ -85,6 +87,9 @@ class LocalSpace
         @config.demux_port
       @ssl_connection = nil
     end
+
+    # The timestamp of the next attempt at connecting to the global server.
+    @next_connection_attempt = nil
 
     # IO sets to pass to Kernel::select, and IO sets returned by
     # select.  We use instance variables so that it is easier to inspect
@@ -123,23 +128,31 @@ class LocalSpace
             fail "INTERNAL ERROR: unhandled @ssl_connection.need_io=%p",
               @ssl_connection.need_io
           end
-        elsif @connection
+        else # @connection != nil
           case @connection.need_io
-          when :none
-            # XXX delay and reconnect
-
           when :connect
-            connect_to_global_server()
-            if @connection.need_io == :write
-              @write_set << @connection.sock
-            elsif @ssl_connection  # just an optimization to speed up attempt
-              @write_set << @ssl_connection.sock
+            unless @next_connection_attempt &&
+                Time.now.to_i < @next_connection_attempt
+              connect_to_global_server()
+
+              # An optimization to speed up the connection attempt.  Under
+              # normal circumstances, the above attempt to connect will
+              # block on write, and so we can immediately put the socket
+              # in the write set.
+              @write_set << @connection.sock if @connection.need_io == :write
             end
 
           when :write  # waiting for connect_nonblock to finish
             @write_set << @connection.sock
 
-          when :reconnect # XXX
+          when :none
+            # If :none, then we were at least connected to the global server
+            # without SSL.  So either the SSL connection attempt failed, or
+            # we got disconnected after being fully connected (that is,
+            # the GlobalSpaceMux detected a connection loss and cleared
+            # @mux.sock).
+            schedule_next_connection_attempt() unless @next_connection_attempt
+            @connection.reset()
 
           else
             fail "INTERNAL ERROR: unhandled @connection.need_io=%p",
@@ -246,6 +259,7 @@ class LocalSpace
       sock = @connection.connect
       if sock
         $log.info "opened connection to global server %s", @config.demux_addr
+        @next_connection_attempt = nil
         if @config.use_ssl
           @ssl_connection = Marinda::ClientSSLConnection.new @config.demux_addr,
             sock
@@ -254,8 +268,7 @@ class LocalSpace
           @mux.setup_connection sock
         end
       else
-        $log.debug "non-SSL connect_nonblock to global server failed"
-        # XXX reconnect after a delay
+        schedule_next_connection_attempt()
       end
 
     # not sure EINTR can be raised by connect_nonblock;
@@ -274,14 +287,19 @@ class LocalSpace
     begin
       $log.info "trying to establish SSL with global server"
       sock = @ssl_connection.connect
+
+      # By this point, either the connect succeeded, or we got an error
+      # like a post connection failure.  In either case, we'll never try
+      # connecting again with the current connection object, so clean up.
+      @ssl_connection = nil
+
       if sock
         $log.info "established SSL connection with global server"
+        @next_connection_attempt = nil
         sock.__connection = @mux
         @mux.setup_connection sock
-        @ssl_connection = nil
       else
-        $log.debug "SSL connect_nonblock to global server failed"
-        # XXX reconnect after a delay
+        schedule_next_connection_attempt()
       end
 
     # not sure EINTR can be raised by connect_nonblock
@@ -292,6 +310,14 @@ class LocalSpace
         $log.debug "SSL connect_nonblock raised %s", msg
       end
     end
+  end
+
+
+  def schedule_next_connection_attempt
+    @next_connection_attempt = Time.now.to_i + RECONNECT_DELAY +
+      rand(RECONNECT_JITTER)
+    $log.debug "next connection attempt at %s",
+      Time.at(@next_connection_attempt).to_s
   end
 
 
