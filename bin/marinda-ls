@@ -168,7 +168,7 @@ server_sock = UNIXServer.open config.socket
 
 if config.use_ssl
   Marinda::ClientSSLConnection.set_ssl_context config.cert, config.key,
-    config.ca_file, config.ca_path
+    config.ca_file, config.ca_path, config.check_server_name
 end
 
 # Detach after creating the server socket to make it easier for the

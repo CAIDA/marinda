@@ -233,11 +233,14 @@ end
 class ClientSSLConnection
 
   @@context = nil
+  @@check_server_name = nil
 
   self.extend SSLSupport
 
-  def self.set_ssl_context(cert_file, key_file, ca_file, ca_path)
+  def self.set_ssl_context(cert_file, key_file, ca_file, ca_path,
+                           check_server_name)
     @@context = create_ssl_context cert_file, key_file, ca_file, ca_path
+    @@check_server_name = check_server_name
   end
 
   #........................................................................
@@ -275,8 +278,7 @@ class ClientSSLConnection
       @ssl.extend ConnectionState
       @ssl.__connection_state = :connected
       @ssl.__connection = nil  # will be set later by caller
-
-      @ssl.post_connection_check @host  # check server DNS name
+      @ssl.post_connection_check @host if @@check_server_name
       return @ssl
 
     # not sure Errno::EINTR is possible with SSLSocket#connect_nonblock

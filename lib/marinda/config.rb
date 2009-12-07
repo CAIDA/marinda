@@ -85,7 +85,8 @@ class GlobalConfig < ConfigBase
 
     import_optional config, "use_ssl", TrueClass
     if @use_ssl
-      import_required config, "check_client_name", TrueClass
+      @check_client_name = true
+      import_optional config, "check_client_name", TrueClass
       import_required config, "cert", String, true
       import_required config, "key", String, true
       import_optional config, "ca_file", String, true
@@ -181,7 +182,7 @@ end
 class LocalConfig < ConfigBase
 
   attr_reader :socket, :node_id, :localspace_only, :demux_addr, :demux_port
-  attr_reader :use_ssl, :cert, :key, :ca_file, :ca_path
+  attr_reader :use_ssl, :check_server_name, :cert, :key, :ca_file, :ca_path
   attr_reader :use_judy
 
   # Can raise MalformedConfigException and YAML exceptions.
@@ -204,6 +205,8 @@ class LocalConfig < ConfigBase
       import_optional config, "use_ssl", TrueClass
 
       if @use_ssl
+        @check_server_name = true
+        import_optional config, "check_server_name", TrueClass
         import_required config, "cert", String, true
         import_required config, "key", String, true
         import_optional config, "ca_file", String, true
