@@ -76,18 +76,14 @@ class LocalSpace
     @services = {}
 
     if @config.localspace_only
-      @connection = nil
       @mux = nil
+      @connection = nil
+      @ssl_connection = nil
     else
-      if @config.use_ssl
-        @connection = Marinda::ClientSSLConnection.new @config.demux_addr,
-          @config.demux_port, @config.cert, @config.key, @config.ca_file,
-          @config.ca_path
-      else
-        @connection = Marinda::InsecureClientConnection.new @config.demux_addr,
-          @config.demux_port
-      end
       @mux = Marinda::GlobalSpaceMux.new @node_id
+      @connection = Marinda::InsecureClientConnection.new @config.demux_addr,
+        @config.demux_port
+      @ssl_connection = nil
     end
 
     # IO sets to pass to Kernel::select, and IO sets returned by
@@ -115,26 +111,38 @@ class LocalSpace
 
       @read_set << @server_sock
 
-      if @connection
-        case @connection.need_io
-        when :none  # connected
-          if @mux.sock
-            @read_set << @mux.sock if @mux.need_io_read
-            @write_set << @mux.sock if @mux.need_io_write
+      unless @config.localspace_only
+        if @mux.sock
+          @read_set << @mux.sock if @mux.need_io_read
+          @write_set << @mux.sock if @mux.need_io_write
+        elsif @ssl_connection
+          case @ssl_connection.need_io
+          when :read then @read_set << @ssl_connection.sock
+          when :write then @write_set << @ssl_connection.sock
           else
-            # XXX delay and reconnect
+            fail "INTERNAL ERROR: unhandled @ssl_connection.need_io=%p",
+              @ssl_connection.need_io
           end
+        elsif @connection
+          case @connection.need_io
+          when :none
+            # XXX delay and reconnect
 
-        when :connect
-          connect_to_global_server()
-          @write_set << @connection.sock if @connection.need_io == :write
+          when :connect
+            connect_to_global_server()
+            if @connection.need_io == :write
+              @write_set << @connection.sock
+            elsif @ssl_connection  # just an optimization to speed up attempt
+              @read_set << @ssl_connection.sock
+            end
 
-        when :write  # waiting for connect_nonblock to finish
-          @write_set << @connection.sock
+          when :write  # waiting for connect_nonblock to finish
+            @write_set << @connection.sock
 
-        else
-          fail "INTERNAL ERROR: unhandled @connection.need_io=%p",
-            @connection.need_io
+          else
+            fail "INTERNAL ERROR: unhandled @connection.need_io=%p",
+              @connection.need_io
+          end
         end
       end
 
@@ -165,14 +173,14 @@ class LocalSpace
         @readable.each do |sock|
           $log.debug "readable %p", sock if $debug_io_select
           case sock.__connection_state
+          when :connected then sock.__connection.read_data()
+          when :listening then handle_incoming_connection()
+          when :ssl_connecting then establish_ssl_connection()
+          when :defunct  # nothing to do
           when :connecting
             msg = sprintf "INTERNAL ERROR: __connection_state=:connecting " +
               "for readable %p", sock
             fail msg
-
-          when :listening then handle_incoming_connection()
-          when :connected then sock.__connection.read_data()
-          when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
               "for readable %p", sock.__connection_state, sock
@@ -185,15 +193,14 @@ class LocalSpace
         @writable.each do |sock|
           $log.debug "writable %p", sock if $debug_io_select
           case sock.__connection_state
+          when :connected then sock.__connection.write_data()
           when :connecting then connect_to_global_server()
-
+          when :ssl_connecting then establish_ssl_connection()
+          when :defunct  # nothing to do
           when :listening
             msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
               "for writable %p", sock
             fail msg
-
-          when :connected then sock.__connection.write_data()
-          when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
               "for writable %p", sock.__connection_state, sock
@@ -233,23 +240,51 @@ class LocalSpace
 
   def connect_to_global_server
     begin
-      $log.debug "trying insecure connect_nonblock to gs"
+      $log.info "trying to open non-SSL connection to global server"
       sock = @connection.connect
-
       if sock
-        $log.debug "insecure connect_nonblock to gs succeeded"
-        sock.__connection = @mux
-        @mux.setup_connection sock
+        $log.info "opened non-SSL connection to global server"
+        if @config.use_ssl
+          @ssl_connection = Marinda::ClientSSLConnection.new @config.demux_addr,
+            sock
+        else
+          sock.__connection = @mux
+          @mux.setup_connection sock
+        end
       else
-        $log.debug "insecure connect_nonblock to gs failed"
+        $log.debug "non-SSL connect_nonblock to gs failed"
         # reconnect after a delay
       end
 
-    # not sure EINTR can be raised by connect_nonblock
+    # not sure EINTR can be raised by connect_nonblock;
+    # IO::WaitReadable is never raised
     rescue Errno::EINTR, IO::WaitWritable
       # do nothing; we'll automatically retry in next select round
       msg = $!.class.name + ": " + $!.to_s
-      $log.debug "insecure connect_nonblock raised %s", msg
+      $log.debug "non-SSL connect_nonblock raised %s", msg
+    end
+  end
+
+
+  def establish_ssl_connection
+    begin
+      $log.info "trying to establish SSL connection with global server"
+      sock = @ssl_connection.connect
+      if sock
+        $log.info "established SSL connection with global server"
+        sock.__connection = @mux
+        @mux.setup_connection sock
+        @ssl_connection = nil
+      else
+        $log.debug "SSL connect_nonblock to gs failed"
+        # XXX reconnect after a delay
+      end
+
+    # not sure EINTR can be raised by connect_nonblock
+    rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable
+      # do nothing; we'll automatically retry in next select round
+      msg = $!.class.name + ": " + $!.to_s
+      $log.debug "SSL connect_nonblock raised %s", msg
     end
   end
 

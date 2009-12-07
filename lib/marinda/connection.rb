@@ -225,47 +225,84 @@ end
 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Note: Set up the SSL context with ClientSSLConnection::set_ssl_context
+#       prior to calling connect.
 class ClientSSLConnection
 
-  include SSLSupport
+  @@context = nil
 
-  def initialize(host, port, cert_file, key_file, ca_file, ca_path)
+  self.extend SSLSupport
+
+  def self.set_ssl_context(cert_file, key_file, ca_file, ca_path)
+    @@context = create_ssl_context cert_file, key_file, ca_file, ca_path
+  end
+
+  #........................................................................
+
+  attr_accessor :need_io
+
+  # {client_sock} is a socket returned by Socket#connect (that is, an
+  # already established TCP connection).
+  def initialize(host, client_sock)
     @host = host
-    @port = port
-    @context = create_ssl_context cert_file, key_file, ca_file, ca_path
+    @client_sock = client_sock
+    @client_sock.__connection_state = :ssl_connecting
+    @client_sock.__connection = self
+
+    @ssl = nil  # SSLSocket wrapping @client_sock
+    @need_io = :read
   end
 
 
-  def open(must_succeed=true)
-    s = ssl = nil
+  def sock
+    @client_sock
+  end
+
+
+  # This passes out IO::WaitReadable or IO::WaitWritable if
+  # SSLSocket#connect_nonblock would block.
+  def connect
     begin
-      s = TCPSocket.new @host, @port
-      s.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
+      unless @ssl
+        @ssl = OpenSSL::SSL::SSLSocket.new @client_sock, @@context
+        @ssl.sync_close = true
+      end
 
-      ssl = OpenSSL::SSL::SSLSocket.new s, @context
-      ssl.sync_close = true
-      ssl.connect
+      @ssl.connect_nonblock
+      @ssl.extend ConnectionState
+      @ssl.__connection_state = :connected
+      @ssl.__connection = nil  # will be set later by caller
 
-      peer_ip = ssl.peeraddr[3]
-      $log.info "ClientSSLConnection#open: opened connection to %s (%s)",
+      peer_ip = @ssl.peeraddr[3]
+      $log.info "ClientSSLConnection#connect: opened SSL connection to %s (%s)",
         @host, peer_ip
 
-      ssl.post_connection_check @host  # check server DNS name
-      ssl
+      @ssl.post_connection_check @host  # check server DNS name
+      return @ssl
 
-    # Note: TCPSocket.new can raise SystemCallError;
-    #       post_connection_check can raise OpenSSL::SSL::SSLError.
+    # not sure Errno::EINTR is possible with SSLSocket#connect_nonblock
+    rescue Errno::EINTR
+      raise
+
+    rescue IO::WaitReadable
+      @need_io = :read
+      raise
+
+    rescue IO::WaitWritable
+      @need_io = :write
+      raise
+
+    # post_connection_check can raise OpenSSL::SSL::SSLError.
     rescue
-      $log.err "ClientSSLConnection#open failed: %p", $!
-      ssl.close rescue nil if ssl
-      s.close rescue nil if s
-      if must_succeed
-	sleep 60
-	retry
-      else
-	raise
-      end
+      $log.err "ClientSSLConnection#connect failed: %p", $!
+      @ssl.close rescue nil if @ssl
+      @ssl = nil
+      @client_sock.close rescue nil
+      @client_sock.__connection_state = :defunct
+      @client_sock = nil
+      return nil
     end
+
   end
 
 end
