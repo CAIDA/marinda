@@ -7,7 +7,7 @@ require 'fileutils'
 
 #---------------------------------------------------------------------------
 
-MY_VERSION = "0.9.1"
+MY_VERSION = "0.10.0"
 
 MY_EXTRA_FILES = ["README", "CHANGES", "COPYING"]
 
