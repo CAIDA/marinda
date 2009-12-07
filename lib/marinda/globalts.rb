@@ -424,7 +424,7 @@ class GlobalSpace
 
       if $debug_io_select
         $log.debug "GlobalSpace: waiting for I/O ..."
-        $log.debug "%d accepting connections", @accepting_connections.length
+        $log.debug "%d pending SSL connections", @accepting_connections.length
         $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
         $log.debug "select write_set (%d fds): %p", @write_set.length,@write_set
       end
@@ -451,7 +451,7 @@ class GlobalSpace
               read_data sock
             end
           when :listening then handle_incoming_connection()
-          when :accepting then handle_ssl_accept sock
+          when :ssl_accepting then handle_ssl_accept sock
           when :defunct  # nothing to do
           else
             msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
@@ -472,7 +472,7 @@ class GlobalSpace
             else
               write_data sock
             end
-          when :accepting then handle_ssl_accept sock
+          when :ssl_accepting then handle_ssl_accept sock
           when :defunct  # nothing to do
           when :listening
             msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
@@ -577,6 +577,7 @@ class GlobalSpace
     if context
       sock = context.sock
       if sock
+        $log.info "purging existing connection with node %d", node_id        
         context.sock = nil
         sock.close rescue nil
         sock.__connection_state = :defunct
@@ -586,16 +587,18 @@ class GlobalSpace
 
 
   def handle_ssl_accept(sock)
-    conn = sock.__connection
-
     begin
+      conn = sock.__connection
       ssl, node_id = conn.accept
 
       # By this point, either the accept succeeded, or we got an error like
       # a post connection failure.  In either case, we'll never need to try
       # accepting again, so clean up.
       @accepting_connections.delete conn
-      setup_connection ssl, node_id if ssl
+      if ssl
+        $log.info "established SSL connection with node %d", node_id
+        setup_connection ssl, node_id
+      end
 
     # not sure EINTR can be raised by SSL accept
     rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable

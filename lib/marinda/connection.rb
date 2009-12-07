@@ -55,35 +55,38 @@ module ConnectionState
   #  :listening = server socket is listening for connections, and we need
   #               to complete accept_nonblock for each incoming connection
   #
-  #  :accepting = server socket completed accept_nonblock, and we now have a
-  #               client connection that needs to do the SSL accept_nonblock
-  #               (only applies to the global server)
+  #  :ssl_accepting = global server socket completed accept_nonblock, and
+  #               we now need to activate SSL with SSL#accept_nonblock (only
+  #               applies to the global server)
   #
-  #  :connected = server socket completed accept_nonblock, and we now have a
-  #               client socket that can be used for reading/writing; or
-  #               a server-to-server connection is fully established
+  #  :connected = a local/global server socket completed accept_nonblock
+  #               (with or without SSL, according to server configuration),
+  #               and we now have a client socket ready for reading/writing;
+  #               or a connection from a local server to the global server
+  #               is fully established (with or without SSL)
   #
   #  :defunct = socket disconnected (normally or abnormally), or a new
-  #               connection between the global server and a remote node
-  #               displaced a previous connection
+  #               connection to the global server displaced a previous
+  #               connection from the same remote node
   #
   # Non-SSL client connections transition from :listening to :connected
   # (local and global servers).
   #
-  # SSL client connections transition from :listening to :accepting to
+  # SSL client connections transition from :listening to :ssl_accepting to
   # :connected (global server only).
   #
-  # A connection from a local server to the global server transitions
+  # An SSL connection from a local server to the global server transitions
   # from :connecting to :ssl_connecting to :connected.
   attr_accessor :__connection_state
 
   # The connection object associated with a given socket.
-  # The value of this attribute depends on __connection_state:
   #
-  #   :listening => InsecureServerConnection object
-  #   :accepting => AcceptingSSLConnection object
-  #   :connected => SockState object
-  #
+  # This value is only really used when __connection_state == :connected,
+  # even though this attribute is set in other states merely out of
+  # completeness.  In the :connected state, this attribute is a SockState
+  # object in the global server, and either a Channel or a GlobalSpaceMux
+  # in the local server, depending on whether the connection is from a
+  # client or the connection is to the global server, respectively.
   attr_accessor :__connection
 
 end
@@ -382,12 +385,12 @@ class InsecureServerConnection
       peer_ip = client_sock.peeraddr[3]
       node_id = nodes[peer_ip]
       if node_id
-        $log.info "InsecureServerConnection#accept_with_whitelist: " +
-          "accepting connection from %s, node %d", peer_ip, node_id
+        $log.info "accepting connection from whitelisted %s, node %d",
+          peer_ip, node_id
         return client_sock, peer_ip, node_id
       else
-        $log.notice "InsecureServerConnection#accept_with_whitelist: " +
-          "rejecting connection from %s: unknown node", peer_ip
+        $log.notice "rejecting connection from %s: node not in whitelist",
+          peer_ip
         client_sock.close rescue nil
         return nil
       end
@@ -432,7 +435,7 @@ class AcceptingSSLConnection
   def initialize(client_sock, peer_ip, node_id)
     @need_io = :read
     @client_sock = client_sock
-    @client_sock.__connection_state = :accepting
+    @client_sock.__connection_state = :ssl_accepting
     @client_sock.__connection = self
 
     @peer_ip = peer_ip

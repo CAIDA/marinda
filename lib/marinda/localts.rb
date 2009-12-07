@@ -255,15 +255,17 @@ class LocalSpace
         end
       else
         $log.debug "non-SSL connect_nonblock to global server failed"
-        # reconnect after a delay
+        # XXX reconnect after a delay
       end
 
     # not sure EINTR can be raised by connect_nonblock;
     # IO::WaitReadable is never raised
     rescue Errno::EINTR, IO::WaitWritable
       # do nothing; we'll automatically retry in next select round
-      msg = $!.class.name + ": " + $!.to_s
-      $log.debug "non-SSL connect_nonblock raised %s", msg
+      if $debug_io_select
+        msg = $!.class.name + ": " + $!.to_s
+        $log.debug "non-SSL connect_nonblock raised %s", msg
+      end
     end
   end
 
@@ -285,8 +287,10 @@ class LocalSpace
     # not sure EINTR can be raised by connect_nonblock
     rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable
       # do nothing; we'll automatically retry in next select round
-      msg = $!.class.name + ": " + $!.to_s
-      $log.debug "SSL connect_nonblock raised %s", msg
+      if $debug_io_select
+        msg = $!.class.name + ": " + $!.to_s
+        $log.debug "SSL connect_nonblock raised %s", msg
+      end
     end
   end
 
