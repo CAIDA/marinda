@@ -677,7 +677,7 @@ class Channel
   # I/O events from LocalSpace --------------------------------------------
 
   # NOTE: This only works with Unix domain sockets, not general TCP sockets.
-  def read_data
+  def read_data(timestamp)
     return unless @sock  # still connected
 
     shutdown_connection = false
@@ -798,7 +798,7 @@ class Channel
 
 
   # NOTE: This only works with Unix domain sockets, not general TCP sockets.
-  def write_data
+  def write_data(timestamp)
     return unless @sock  # still connected
 
     buffer = @write_queue.first

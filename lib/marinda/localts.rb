@@ -54,6 +54,7 @@ class LocalSpace
   TIMEOUT = 5 # seconds of timeout for select
   RECONNECT_DELAY = 60 # seconds between attempts to connect to global server
   RECONNECT_JITTER = 30 # seconds of random jitter added to delay
+  HEARTBEAT_TIMEOUT = 30 # seconds from last read/write activity to global serv
 
   def initialize(config, server_sock)
     @config = config
@@ -117,10 +118,18 @@ class LocalSpace
       @read_set << @server_sock
 
       unless @config.localspace_only
-        if @mux.sock
+        @loop_timestamp = Time.now.to_i
+        if @mux.sock  # connection fully established
           @read_set << @mux.sock if @mux.need_io_read
-          @write_set << @mux.sock if @mux.need_io_write
-        elsif @ssl_connection
+          if @mux.need_io_write
+            @write_set << @mux.sock
+          else
+            if @loop_timestamp - @mux.last_activity_time > HEARTBEAT_TIMEOUT
+              @mux.schedule_heartbeat @loop_timestamp
+              @write_set << @mux.sock
+            end
+          end
+        elsif @ssl_connection  # TCP connected, but trying to establish SSL
           case @ssl_connection.need_io
           when :read then @read_set << @ssl_connection.sock
           when :write then @write_set << @ssl_connection.sock
@@ -128,11 +137,11 @@ class LocalSpace
             fail "INTERNAL ERROR: unhandled @ssl_connection.need_io=%p",
               @ssl_connection.need_io
           end
-        else # @connection != nil
+        else # @connection != nil  # disconnected, or trying to connect
           case @connection.need_io
           when :connect
             unless @next_connection_attempt &&
-                Time.now.to_i < @next_connection_attempt
+                @loop_timestamp < @next_connection_attempt
               connect_to_global_server()
 
               # An optimization to speed up the connection attempt.  Under
@@ -188,7 +197,7 @@ class LocalSpace
         @readable.each do |sock|
           $log.debug "readable %p", sock if $debug_io_select
           case sock.__connection_state
-          when :connected then sock.__connection.read_data()
+          when :connected then sock.__connection.read_data @loop_timestamp
           when :listening then handle_incoming_connection()
           when :ssl_connecting then establish_ssl_connection()
           when :defunct  # nothing to do
@@ -208,7 +217,7 @@ class LocalSpace
         @writable.each do |sock|
           $log.debug "writable %p", sock if $debug_io_select
           case sock.__connection_state
-          when :connected then sock.__connection.write_data()
+          when :connected then sock.__connection.write_data @loop_timestamp
           when :connecting then connect_to_global_server()
           when :ssl_connecting then establish_ssl_connection()
           when :defunct  # nothing to do
@@ -317,7 +326,7 @@ class LocalSpace
 
 
   def schedule_next_connection_attempt
-    @next_connection_attempt = Time.now.to_i + RECONNECT_DELAY +
+    @next_connection_attempt = @loop_timestamp + RECONNECT_DELAY +
       rand(RECONNECT_JITTER)
     $log.debug "next connection attempt at %s",
       Time.at(@next_connection_attempt).to_s

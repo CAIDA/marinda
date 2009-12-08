@@ -39,14 +39,13 @@ module Marinda
 
 class GlobalSpaceMux
 
-  attr_reader :sock
+  attr_reader :sock, :last_activity_time
 
   private
 
   include MuxMessageCodes
 
   CVS_ID = "$Id: globalmux.rb,v 1.53 2009/04/02 23:29:38 youngh Exp $"
-  HEARTBEAT_INTERVAL = 60  # idle seconds between heartbeat messages
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
   READ_SIZE = 8192         # num bytes to read at once with sysread
 
@@ -98,6 +97,10 @@ class GlobalSpaceMux
     @sock = nil        # open socket to demux or nil if lost connection
     @protocol = nil
     @remote_banner = nil
+
+    # The timestamp of the last successful read_nonblock/write_nonblock call.
+    # This is used by LocalSpace to check for the heartbeat timeout.
+    @last_activity_time = nil
 
     # The next available sequence number (that is, use this value in a
     # message and then post increment the variable).
@@ -345,8 +348,8 @@ class GlobalSpaceMux
   end
 
 
-  def generate_heartbeat_message
-    contents = [ HEARTBEAT_CMD, Time.now.to_i ].pack("CN")
+  def generate_heartbeat_message(timestamp)
+    contents = [ HEARTBEAT_CMD, timestamp ].pack("CN")
     marshal_contents 0, contents
   end
 
@@ -481,7 +484,12 @@ class GlobalSpaceMux
   end
 
 
-  def read_data
+  def schedule_heartbeat(timestamp)
+    @write_queue << generate_heartbeat_message(timestamp) if @write_queue.empty?
+  end
+
+
+  def read_data(timestamp)
     return unless @sock  # still connected
 
     @messages.clear
@@ -489,6 +497,7 @@ class GlobalSpaceMux
 
     begin
       data = @sock.read_nonblock READ_SIZE
+      @last_activity_time = timestamp
       if $debug_mux_io_bytes
         $log.debug "GlobalSpaceMux#read_data from %p: %p", @sock, data
       end
@@ -558,21 +567,22 @@ class GlobalSpaceMux
   end
 
 
-  def write_data
+  def write_data(timestamp)
     return unless @sock  # still connected
 
-    if @write_queue.length > 1
+    if @write_queue.length == 1
+      buffer = @write_queue.first
+    else # @write_queue.length > 1
       buffer = @write_queue.join nil
       @write_queue.clear
       @write_queue << buffer
-    else
-      buffer = @write_queue.first
     end
 
     begin
       while buffer.length > 0
         n = @sock.write_nonblock buffer
         data_written = buffer.slice! 0, n
+        @last_activity_time = timestamp
         if $debug_mux_io_bytes
           $log.debug "GlobalSpaceMux#write_data to %p: wrote %d bytes, " +
             "%d left: %p", @sock, n, buffer.length, data_written

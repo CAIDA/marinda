@@ -697,12 +697,12 @@ class GlobalSpace
     return unless sock.__connection_state == :connected
 
     state = sock.__connection
-    if state.write_queue.length > 1
+    if state.write_queue.length == 1
+      buffer = state.write_queue.first
+    else # state.write_queue.length > 1
       buffer = state.write_queue.join nil
       state.write_queue.clear
       state.write_queue << buffer
-    else
-      buffer = state.write_queue.first
     end
 
     begin
