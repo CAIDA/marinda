@@ -142,7 +142,7 @@ class GlobalSpaceMux
     #.....................................................................
 
     @read_buffer = ReadBuffer.new
-    @write_queue = List.new  # [ String ]
+    @write_queue = []  # [ String ]
     @messages = []  # raw messages from the global server read in read_data
   end
 
@@ -561,17 +561,25 @@ class GlobalSpaceMux
   def write_data
     return unless @sock  # still connected
 
-    buffer = @write_queue.first
+    if @write_queue.length > 1
+      buffer = @write_queue.join nil
+      @write_queue.clear
+      @write_queue << buffer
+    else
+      buffer = @write_queue.first
+    end
 
     begin
-      n = @sock.write_nonblock buffer
-      data_written = buffer.slice! 0, n
-      if $debug_mux_io_bytes
-        $log.debug "GlobalSpaceMux#write_data to %p: wrote %d bytes, " +
-          "%d left: %p", @sock, n, buffer.length, data_written
+      while buffer.length > 0
+        n = @sock.write_nonblock buffer
+        data_written = buffer.slice! 0, n
+        if $debug_mux_io_bytes
+          $log.debug "GlobalSpaceMux#write_data to %p: wrote %d bytes, " +
+            "%d left: %p", @sock, n, buffer.length, data_written
+        end
       end
 
-      @write_queue.shift if buffer.length == 0
+      @write_queue.shift
 
     rescue Errno::EINTR  # might be raised by write_nonblock
       # do nothing, since we'll automatically retry in the next select() round
@@ -599,7 +607,7 @@ class GlobalSpaceMux
   def reset_connection
     return unless @sock
 
-    @sock.close rescue nil if @sock
+    @sock.close rescue nil
     @sock = nil
     @read_buffer = ReadBuffer.new
     @write_queue.clear

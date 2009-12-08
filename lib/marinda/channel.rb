@@ -772,7 +772,7 @@ class Channel
       #
       # Note: Because we reset the connection on EOF, we don't allow half
       #       closing of sockets.
-      shutdown_connection = true  
+      shutdown_connection = true
     end
 
     begin
@@ -790,10 +790,6 @@ class Channel
       $log.info "Channel#handle_client_message raised %p", $!
       $log.info "Channel active_command=%p", @active_command
       shutdown()
-
-    rescue
-      shutdown()
-      raise
 
     else
       shutdown() if shutdown_connection
@@ -859,8 +855,8 @@ class Channel
   # Called by self on EOF or some I/O error with the client, or by
   # LocalSpace when shutting down the local server.
   def shutdown
+    return unless @sock
     $log.info "Channel %#x: shutting down", object_id
-
     cancel_active_command()
     @space.unregister_channel self
 

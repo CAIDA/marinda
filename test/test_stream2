@@ -1,0 +1,186 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## Tests the iteration operations read_all, take_all, monitor, and consume.
+##
+## Unlike test_basic-ops, you don't have to start up marinda-gs and marinda-ls
+## with empty regions to run this test script because this script clears
+## out regions prior to use.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2009 The Regents of the University of California.
+## 
+## This file is part of Marinda.
+## 
+## Marinda is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+## 
+## Marinda is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
+##
+## $Id: $
+#############################################################################
+
+$: << "."
+$: << "../lib"
+
+require 'thread'
+require 'socket'
+require 'marinda'
+require 'marinda/verboseclient'
+
+Thread.abort_on_exception = true
+
+SOCKET = "/tmp/localts-test.sock"
+s = UNIXSocket.open SOCKET
+$c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
+$c.hello
+$c2 = Marinda::VerboseClient.new($c.duplicate, "c2")
+$g = Marinda::VerboseClient.new $c.global_commons, "g"
+$g2 = Marinda::VerboseClient.new($g.duplicate, "g2")
+
+NUM_TUPLES = 500
+
+def assert_equal(x, y)
+  unless x == y
+    printf "FAILED: %p doesn't equal %p\n", x, y
+    exit 1
+  else
+    printf "ok %p\n", y
+  end
+end
+
+
+def check_remainder(ts, remainder)
+  result = []
+  ts.read_all [] do |tuple|
+    result << tuple
+  end
+
+  assert_equal(result, remainder)
+end
+
+
+def clear(ts)
+  while ts.takep []; end
+end
+
+
+#----------------------------------------------------------------------------
+
+ALL_TUPLES = []
+NUM_TUPLES.times do |i|
+  ALL_TUPLES << [i, 2*i, 3*i, 4*i]
+end
+
+def populate(ts)
+  ALL_TUPLES.each do |tuple|
+    ts.write tuple
+  end
+end
+
+
+#----------------------------------------------------------------------------
+def test_monitor_stream(descr, ts, ts2, template, preload, last_tuple, expected)
+  puts "\n::: testing monitor_stream #{template.inspect} in #{descr} :::"
+
+  clear ts
+  q = Queue.new
+
+  Thread.new do
+    ALL_TUPLES.each_with_index do |tuple, i|
+      if i == preload
+        q << :start
+      end
+      ts2.write tuple
+    end
+    q << :start if preload == ALL_TUPLES.length
+    q << :done
+  end
+
+  q.deq  # wait for :start
+  result = []
+  ts.monitor_stream template do |tuple|
+    puts "monitor_stream >> " + tuple.inspect
+    result << tuple
+    break if tuple == last_tuple
+  end
+
+  q.deq  # wait for :done
+  assert_equal(result, expected)
+end
+
+
+def test_every_monitor_stream(descr, ts, ts2)
+  test_monitor_stream descr, ts, ts2, [], 50, ALL_TUPLES.last,
+    ALL_TUPLES
+  test_monitor_stream descr, ts, ts2, [], 100, ALL_TUPLES.last,
+    ALL_TUPLES
+  test_monitor_stream descr, ts, ts2, [], 300, ALL_TUPLES.last,
+    ALL_TUPLES
+end
+
+
+#----------------------------------------------------------------------------
+def test_consume_stream(descr, ts, ts2, template, preload, last_tuple, expected,
+                        remainder)
+  puts "\n::: testing consume_stream #{template.inspect} in #{descr} :::"
+
+  clear ts
+  q = Queue.new
+
+  Thread.new do
+    ALL_TUPLES.each_with_index do |tuple, i|
+      if i == preload
+        q << :start
+      end
+      ts2.write tuple
+    end
+    q << :start if preload == ALL_TUPLES.length
+    q << :done
+  end
+
+  q.deq  # wait for :start
+  result = []
+  ts.consume_stream template do |tuple|
+    puts "consume_stream >> " + tuple.inspect
+    result << tuple
+    break if tuple == last_tuple
+  end
+
+  q.deq  # wait for :done
+  assert_equal(result, expected)
+  check_remainder ts, remainder
+end
+
+
+def test_every_consume_stream(descr, ts, ts2)
+  test_consume_stream descr, ts, ts2, [], 50, ALL_TUPLES.last,
+    ALL_TUPLES, []
+  test_consume_stream descr, ts, ts2, [], 100, ALL_TUPLES.last,
+    ALL_TUPLES, []
+  test_consume_stream descr, ts, ts2, [], 300, ALL_TUPLES.last,
+    ALL_TUPLES, []
+end
+
+
+#############################################################################
+
+puts "\n\n==[ local ]=======================================================\n"
+
+test_every_monitor_stream "local commons", $c, $c2
+test_every_consume_stream "local commons", $c, $c2
+
+puts "\n\n==[ global ]======================================================\n"
+
+test_every_monitor_stream "global commons", $g, $g2
+test_every_consume_stream "global commons", $g, $g2
+
+puts "\n\n### SUCCESS."

@@ -228,17 +228,19 @@ class GlobalSpace
   end
 
   ReadBuffer = Struct.new :length, :payload
-  WriteBuffer = Struct.new :payload
 
   # SockState contains state for both read and write directions of sockets.
   # The attribute {read_buffer} only applies to reading and contains a
   # instance of ReadBuffer.  The attribute {write_queue} only applies to
-  # writing and contains an array of WriteBuffer.
+  # writing and contains an array of strings.
   #
-  # You can insert :disconnect into {write_queue} to disconnect the connection
-  # at a specific point, such as during a failed 'hello negotiations' (see
-  # comments at class Context) when you want to disconnect immediately after
-  # sending an error response.
+  # To disconnect after flushing all writes, set write_and_disconnect to
+  # true.  This is useful for disconnecting immediately after sending an
+  # error response during a failed 'hello negotiations' (see comments at
+  # class Context).  Note: You must enqueue something to write (even 1 byte)
+  # or write_and_disconnect may not take effect (that is, disconnection only
+  # happens in write_data, and write_data will only be executed if there is
+  # data to write).
   #
   # The {ssl_io} attribute is for handling SSL renegotiations.  A read
   # operation may actually need the SSL socket to be writable, and a write
@@ -251,11 +253,13 @@ class GlobalSpace
   # application-level reads/writes until the SSL renegotiation completes.
   class SockState
     attr_accessor :context, :read_buffer, :write_queue, :ssl_io
+    attr_accessor :write_and_disconnect
 
     def initialize(context)
       @context = context
       @read_buffer = ReadBuffer.new
-      @write_queue = List.new  # [WriteBuffer or :disconnect]
+      @write_queue = []  # [ String ]
+      @write_and_disconnect = false
       @ssl_io = nil
     end
   end
@@ -409,11 +413,7 @@ class GlobalSpace
           when :write_needs_readable then @read_set << sock
           when nil
             @read_set << sock
-
-            # XXX unnecessary if the first write_queue item is a :disconnect,
-            #     and a full send window might prevent/delay disconnection?
             @write_set << sock unless state.write_queue.empty?
-
           else
             msg = sprintf "INTERNAL ERROR: unknown ssl_io=%p " +
               "for socket %p", state.ssl_io, sock
@@ -697,37 +697,30 @@ class GlobalSpace
     return unless sock.__connection_state == :connected
 
     state = sock.__connection
+    if state.write_queue.length > 1
+      buffer = state.write_queue.join nil
+      state.write_queue.clear
+      state.write_queue << buffer
+    else
+      buffer = state.write_queue.first
+    end
 
     begin
-      loop do
-        return if state.write_queue.empty?
-#      $log.notice "runtime inconsistency: called GlobalSpace#write_data "+
-#        "on a socket (%p) with an empty write_queue; node_id=%d, " +
-#        "session_id=%#x, demux_seqnum=%d, mux_seqnum=%d", sock,
-#        state.context.node_id, state.context.session_id,
-#        state.context.seqnum, state.context.mux_seqnum
-#      return
-
-        buffer = state.write_queue.first
-        if buffer == :disconnect
-          $log.info "write_data: explicitly disconnecting node %d",
-            state.context.node_id
-          state.write_queue.clear
-          reset_connection state.context
-          return
+      while buffer.length > 0
+        n = sock.write_nonblock buffer
+        data_written = buffer.slice! 0, n
+        if $debug_io_bytes
+          $log.debug "write_data to %p (node %d): wrote %d bytes, " +
+            "%d left: %p", sock, state.context.node_id, n,
+            buffer.length, data_written
         end
+      end
 
-        while buffer.payload.length > 0
-          n = sock.write_nonblock buffer.payload
-          data_written = buffer.payload.slice! 0, n
-          if $debug_io_bytes
-            $log.debug "write_data to %p (node %d): wrote %d bytes, " +
-              "%d left: %p", sock, state.context.node_id, n,
-              buffer.payload.length, data_written
-          end
-        end
-
-	state.write_queue.shift
+      state.write_queue.shift
+      if state.write_and_disconnect
+        $log.info "write_data: explicitly disconnecting node %d",
+          state.context.node_id
+        reset_connection state.context
       end
 
     rescue Errno::EINTR  # might be raised by write_nonblock
@@ -756,8 +749,10 @@ class GlobalSpace
 
 
   def reset_connection(context)
+    return unless context.sock
     context.sock.close rescue nil
     context.sock.__connection_state = :defunct
+    context.sock.__connection = nil
     context.sock = nil
   end
 
@@ -1070,7 +1065,7 @@ class GlobalSpace
 
     state = context.sock.__connection
     context.unacked_messages.each do |message|
-      state.write_queue << WriteBuffer[marshal_message(context, message)]
+      state.write_queue << marshal_message(context, message)
     end
   end
 
@@ -1079,7 +1074,7 @@ class GlobalSpace
     message = generate_error_hello_message error_text
     enq_hello_message context, message
 
-    context.sock.__connection.write_queue << :disconnect
+    context.sock.__connection.write_and_disconnect = true
   end
 
 
@@ -1106,7 +1101,7 @@ class GlobalSpace
 
 
   def enq_hello_message(context, message)
-    context.sock.__connection.write_queue << WriteBuffer[message]
+    context.sock.__connection.write_queue << message
     # Note: Don't send unacked_messages until negotiations are over.
   end
 
@@ -1149,8 +1144,7 @@ class GlobalSpace
     context.seqnum += 1
 
     if context.sock && context.sock.__connection_state == :connected
-      m = marshal_message context, message
-      context.sock.__connection.write_queue << WriteBuffer[m]
+      context.sock.__connection.write_queue << marshal_message(context, message)
     end
     context.unacked_messages << message
   end
