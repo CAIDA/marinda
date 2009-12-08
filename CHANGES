@@ -11,6 +11,7 @@ version 0.10.0, 2009-12-07
     with check_server_name config item
   * marinda-ls: now deletes the server Unix socket on clean exit
   * marinda-gs and marinda-ls: improved descriptiveness of syslog messages
+  * improved efficiency of communication between marinda-ls and marinda-gs
 
 version 0.9.1, 2009-12-01
   * marinda-ls: fixed Ruby 1.9.x incompatibility that could cause a crash
