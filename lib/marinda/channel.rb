@@ -680,6 +680,7 @@ class Channel
   def read_data
     return unless @sock  # still connected
 
+    shutdown_connection = false
     @messages.clear  # [ [payload, file] ]
     @read_buffer.payload ||= ""
 
@@ -762,23 +763,40 @@ class Channel
         $log.info "Channel#read_data from %p: %p", @sock, $!
       end
 
-      # Because we reset the connection on EOF, we don't allow half closing
-      # of sockets.
-      reset_connection()  # but don't shutdown yet, since there might be msgs
+      # Don't immediately shutdown because there may be messages read from
+      # the client that must still be processed.  For example, a client can
+      # perform a series of tuple space write operations and then
+      # disconnect, and the resulting legitimate EOF would trigger a
+      # shutdown of the connection which should be delayed until all
+      # operations are processed.
+      #
+      # Note: Because we reset the connection on EOF, we don't allow half
+      #       closing of sockets.
+      shutdown_connection = true  
     end
 
-    @messages.each do |payload, file|
-      begin
+    begin
+      @messages.each do |payload, file|
         handle_client_message payload, file
-      rescue ChannelPrivilegeError
-        $log.debug "Channel#handle_client_message raised %p", $!
-        reqnum = payload.unpack("C").first
-        send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
-      rescue ChannelError
-        $log.info "Channel#handle_client_message raised %p", $!
-        $log.info "Channel active_command=%p", @active_command
-        shutdown()
       end
+
+    rescue ChannelPrivilegeError
+      $log.debug "Channel#handle_client_message raised %p", $!
+      reqnum = payload.unpack("C").first
+      send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
+      shutdown()
+
+    rescue ChannelError
+      $log.info "Channel#handle_client_message raised %p", $!
+      $log.info "Channel active_command=%p", @active_command
+      shutdown()
+
+    rescue
+      shutdown()
+      raise
+
+    else
+      shutdown() if shutdown_connection
     end
   end
 
@@ -833,20 +851,18 @@ class Channel
       if $debug_client_io_bytes || !$!.kind_of?(Errno::EPIPE)
         $log.info "Channel#write_data to %p: %p", @sock, $!
       end
-      reset_connection()
       shutdown()
     end
   end
 
 
-  # NOTE: This method shouldn't initiate shutdown, since there may have been
-  #       messages read from the client that must still be processed; that
-  #       is, a call to reset_connection is not necessarily abnormal.  For
-  #       example, a client can perform a series of tuple space write
-  #       operations and then disconnect, and the resulting legitimate EOF
-  #       would trigger a reset_connection.
-  def reset_connection
-    return unless @sock
+  # Called by self on EOF or some I/O error with the client, or by
+  # LocalSpace when shutting down the local server.
+  def shutdown
+    $log.info "Channel %#x: shutting down", object_id
+
+    cancel_active_command()
+    @space.unregister_channel self
 
     @write_queue.each do |buffer|
       if buffer.file
@@ -858,17 +874,6 @@ class Channel
 
     @sock.close rescue nil
     @sock = nil
-  end
-
-
-  # Called by self on EOF or some I/O error with the client, or by
-  # LocalSpace when shutting down the local server.
-  def shutdown
-    $log.info "Channel %#x: shutting down", object_id
-
-    cancel_active_command()
-    @space.unregister_channel self
-    reset_connection()
   end
 
 
