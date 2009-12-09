@@ -141,9 +141,17 @@ if $options.use_lock_file
   end
 end
 
-config = Marinda::GlobalConfig.new $options.config_path
-config.export_debugging_flags()
-$log.debug "%p", config if $options.verbose
+begin
+  config = Marinda::GlobalConfig.new $options.config_path
+  config.export_debugging_flags()
+  $log.debug "%p", config if $options.verbose
+
+rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
+  msg = $!.class.name + ": " + $!.to_s
+  $log.err "ERROR: couldn't load config from '%s': %s",
+    $options.config_path, msg
+  exit 1
+end
 
 # Perform require now to fail fast if this dependency doesn't exist.
 # This is usually better than failing part way through start up.

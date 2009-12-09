@@ -505,7 +505,7 @@ class GlobalSpace
           config.export_debugging_flags()
           $log.debug "%p", config if $options.verbose
           @config = config
-        rescue # GlobalConfig::MalformedConfigException & YAML exceptions
+        rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
           msg = $!.class.name + ": " + $!.to_s
           $log.err "ERROR: couldn't load new config from '%s': %s; " +
             "backtrace: %s", $options.config_path, msg,

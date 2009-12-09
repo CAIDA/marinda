@@ -2,7 +2,7 @@
 ## A class for multiplexing I/O at the local tuple space onto the single
 ## connection between the local and global tuple spaces.
 ##
-## GlobalSpaceDemux does the demultiplexing at the global tuple space.
+## GlobalSpace does the demultiplexing at the global tuple space.
 ##
 ## --------------------------------------------------------------------------
 ## Copyright (C) 2007, 2008, 2009 The Regents of the University of California.
@@ -104,12 +104,12 @@ class GlobalSpaceMux
     # message and then post increment the variable).
     #
     # This must be > 0, since a seqnum of 0 is used by GlobalSpaceMux and
-    # GlobalSpaceDemux to mean that no messages have ever been received
+    # GlobalSpace to mean that no messages have ever been received
     # from each other.
     @seqnum = 1
 
     # The highest sequence number ever observed in messages received from
-    # GlobalSpaceDemux; specifically, this gives the seqnum of the latest
+    # GlobalSpace; specifically, this gives the seqnum of the latest
     # response issued by the demux that has been received by the mux; 0 is not
     # a valid seqnum and instead means no messages have ever been received.
     @demux_seqnum = 0
@@ -133,7 +133,7 @@ class GlobalSpaceMux
     @ongoing_requests = Hash.new  # seqnum => Message
 
     # This is for keeping track of the GlobalSpaceMux seqnum used to send a
-    # request to GlobalSpaceDemux, so that the request can be cancelled
+    # request to GlobalSpace, so that the request can be cancelled
     # later with a CANCEL_CMD.  This seqnum is referred to as the 'reqnum'
     # in the global server.
     #
@@ -150,12 +150,12 @@ class GlobalSpaceMux
 
   def process_demux_message(payload)
     # mux_seqnum: the highest mux sequence number ever observed by
-    #             GlobalSpaceDemux in commands it received from
+    #             GlobalSpace in commands it received from
     #             GlobalSpaceMux, up to the point at which the demux
     #             sent its latest response; a value of 0 means the demux
     #             had never received commands before
     #
-    # demux_seqnum: the latest sequence number at the GlobalSpaceDemux-end
+    # demux_seqnum: the latest sequence number at the GlobalSpace-end
     #             of the link; this gives the seqnum of the latest response
     #             issued by the demux that was just received by the mux;
     #             valid seqnums are >= 1

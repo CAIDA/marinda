@@ -63,11 +63,11 @@ class Region
 
 
   # The required block should take |session_id, request| and store the request
-  # into GlobalSpaceDemux.@ongoing_requests.  This ties together the
-  # RegionRequest objects restored in TemplateBag to the GlobalSpaceDemux.
+  # into GlobalSpace.@ongoing_requests.  This ties together the
+  # RegionRequest objects restored in TemplateBag to the GlobalSpace.
   #
   # The {sessions} argument should map session_id to a Context object restored
-  # in GlobalSpaceDemux.
+  # in GlobalSpace.
   def restore_state(state, checkpoint_id, tuple_seqnum, sessions, &block)
     @tuples.restore_state state, checkpoint_id, tuple_seqnum, @port
     @templates.restore_state state, checkpoint_id, @port, sessions,

@@ -82,8 +82,7 @@ class LocalSpace
       @ssl_connection = nil
     else
       @mux = Marinda::GlobalSpaceMux.new @node_id
-      @connection = Marinda::InsecureClientConnection.new @config.demux_addr,
-        @config.demux_port
+      @connection = Marinda::InsecureClientConnection.new @config.global_server_addr, @config.global_server_port
       @ssl_connection = nil
     end
 
@@ -247,7 +246,7 @@ class LocalSpace
           config.export_debugging_flags()
           $log.debug "%p", config if $options.verbose
           @config = config
-        rescue # LocalConfig::MalformedConfigException & YAML exceptions
+        rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
           msg = $!.class.name + ": " + $!.to_s
           $log.err "ERROR: couldn't load new config from '%s': %s; " +
             "backtrace: %s", $options.config_path, msg,
@@ -262,14 +261,15 @@ class LocalSpace
 
   def connect_to_global_server
     begin
-      $log.info "trying to connect to global server %s", @config.demux_addr
+      $log.info "trying to connect to global server %s",
+        @config.global_server_addr
       sock = @connection.connect
       if sock
-        $log.info "opened connection to global server %s", @config.demux_addr
+        $log.info "opened connection to global server %s",
+          @config.global_server_addr
         @next_connection_attempt = nil
         if @config.use_ssl
-          @ssl_connection = Marinda::ClientSSLConnection.new @config.demux_addr,
-            sock
+          @ssl_connection = Marinda::ClientSSLConnection.new @config.global_server_addr, sock
         else
           sock.__connection = @mux
           @mux.setup_connection sock

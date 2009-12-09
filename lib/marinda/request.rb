@@ -32,9 +32,9 @@ class RegionRequest
   #     worker => LocalSpace
   #     channel => Channel
   #
-  # In GlobalSpaceDemux, the initialization arguments are
+  # In GlobalSpace, the initialization arguments are
   #
-  #     worker => GlobalSpaceDemux
+  #     worker => GlobalSpace
   #     channel => Context
   #
   # Basically, {worker} should be the main event-dispatching thread.  When

@@ -98,16 +98,16 @@ class GlobalConfig < ConfigBase
     # Use Judy arrays instead of List.
     import_optional config, "use_judy", TrueClass
 
-    # select processing in GlobalSpaceDemux
+    # select processing in GlobalSpace
     import_optional config, "debug_io_select", TrueClass
 
-    # read_data and write_data in GlobalSpaceDemux
+    # read_data and write_data in GlobalSpace
     import_optional config, "debug_io_bytes", TrueClass
 
-    # process_mux_message in GlobalSpaceDemux
+    # process_mux_message in GlobalSpace
     import_optional config, "debug_io_messages", TrueClass
 
-    # command/request handling in GlobalSpaceDemux
+    # command/request handling in GlobalSpace
     import_optional config, "debug_commands", TrueClass
   end
 
@@ -179,7 +179,8 @@ end
 
 class LocalConfig < ConfigBase
 
-  attr_reader :socket, :node_id, :localspace_only, :demux_addr, :demux_port
+  attr_reader :socket, :socket_access, :node_id, :localspace_only
+  attr_reader :global_server_addr, :global_server_port
   attr_reader :use_ssl, :check_server_name, :cert, :key, :ca_file, :ca_path
   attr_reader :use_judy
 
@@ -189,6 +190,15 @@ class LocalConfig < ConfigBase
     $log.debug "%p", config if $options.verbose
 
     import_required config, "socket", String
+
+    # Unix permissions for the server Unix socket.
+    # Note: YAML accepts octal with 0 prefix.
+    import_optional config, "socket_access", Integer
+    if @socket_access && (@socket_access < 0 || @socket_access > 0777)
+      raise MalformedConfigException, "invalid 'socket_access': " +
+        "must be a valid Unix permission (e.g., 0600 for rw-------)"
+    end
+
     import_required config, "node_id", Integer
     if @node_id <= 0 || @node_id > 2**15
       raise MalformedConfigException, "invalid 'node_id': " +
@@ -196,12 +206,12 @@ class LocalConfig < ConfigBase
     end
 
     import_optional config, "localspace_only", TrueClass
-
     unless @localspace_only
-      import_required config, "demux_addr", String
-      import_required config, "demux_port", Integer
-      import_optional config, "use_ssl", TrueClass
+      import_required config, "global_server_addr", String
+      import_required config, "global_server_port", Integer
 
+      import_optional config, "use_ssl", TrueClass
+      @use_ssl = false if @global_server_addr == "127.0.0.1"
       if @use_ssl
         @check_server_name = true
         import_optional config, "check_server_name", TrueClass

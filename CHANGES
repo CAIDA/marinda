@@ -12,6 +12,12 @@ version 0.10.0, 2009-12-07
   * marinda-ls: now deletes the server Unix socket on clean exit
   * marinda-gs and marinda-ls: improved descriptiveness of syslog messages
   * improved efficiency of communication between marinda-ls and marinda-gs
+  * improved reporting of errors while loading config files
+  * marinda-ls: added socket_access config option to set the Unix
+    permissions of the server socket
+  * marinda-ls: renamed config options:
+    - demux_addr to global_server_addr
+    - demux_port to global_server_port
 
 version 0.9.1, 2009-12-01
   * marinda-ls: fixed Ruby 1.9.x incompatibility that could cause a crash
