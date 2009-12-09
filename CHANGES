@@ -18,6 +18,7 @@ version 0.10.0, 2009-12-07
   * marinda-ls: renamed config options:
     - demux_addr to global_server_addr
     - demux_port to global_server_port
+  * added --process-name for setting the process name
 
 version 0.9.1, 2009-12-01
   * marinda-ls: fixed Ruby 1.9.x incompatibility that could cause a crash
