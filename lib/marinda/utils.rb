@@ -18,8 +18,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: utils.rb,v 1.2 2009/03/08 07:40:54 youngh Exp $
 #############################################################################
 
 module Marinda

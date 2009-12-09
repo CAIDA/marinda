@@ -19,8 +19,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: msgcodes.rb,v 1.27 2009/03/17 01:04:21 youngh Exp $
 #############################################################################
 
 module Marinda

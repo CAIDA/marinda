@@ -18,8 +18,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: tuple.rb,v 1.23 2009/03/17 01:11:02 youngh Exp $
 #############################################################################
 
 require 'marinda/flags'

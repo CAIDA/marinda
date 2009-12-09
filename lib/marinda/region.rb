@@ -21,8 +21,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: region.rb,v 1.32 2009/03/17 01:07:20 youngh Exp $
 #############################################################################
 
 require 'marinda/templatebag'

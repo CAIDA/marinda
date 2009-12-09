@@ -19,8 +19,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: globaldemux.rb,v 1.37 2009/04/02 23:27:34 youngh Exp $
 #############################################################################
 
 require 'yaml'

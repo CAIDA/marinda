@@ -23,8 +23,6 @@
 ##
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: marinda-ls,v 1.4 2009/03/08 08:00:16 youngh Exp $
 #############################################################################
 
 $0 = "marinda-ls"

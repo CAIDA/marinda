@@ -19,8 +19,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: list.rb,v 1.36 2009/04/02 22:21:59 youngh Exp $
 #############################################################################
 
 module Marinda

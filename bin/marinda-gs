@@ -22,8 +22,6 @@
 ##
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: marinda-gs,v 1.4 2009/03/08 08:53:08 youngh Exp $
 #############################################################################
 
 $0 = "marinda-gs"

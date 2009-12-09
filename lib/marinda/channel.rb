@@ -28,8 +28,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: channel.rb,v 1.45 2009/03/16 23:33:59 youngh Exp $
 #############################################################################
 
 require 'ostruct'
@@ -41,6 +39,7 @@ require 'marinda/msgcodes'
 require 'marinda/flagsets'
 require 'marinda/port'
 require 'marinda/tuple'
+require 'marinda/version'
 
 module Marinda
 
@@ -51,7 +50,6 @@ class Channel
 
   include ChannelMessageCodes
 
-  CVS_ID = "$Id: channel.rb,v 1.45 2009/03/16 23:33:59 youngh Exp $"
   PEER_HANDLE_MAX = 2**31 - 1   # max value storable with Array#pack("N")
 
   CLIENT_MESSAGE_LENGTH_SIZE = 2  # num bytes in length field of client msg
@@ -282,7 +280,7 @@ class Channel
   def hello(reqnum, command, client_protocol, client_banner)
     @protocol = [ PROTOCOL_VERSION, client_protocol ].min
     send reqnum, "CCNa*", HELLO_RESP, @protocol, @flags.flags,
-      "Ruby server: #{CVS_ID}"
+      "Marinda Ruby local server v#{Marinda::VERSION}"
   end
 
 

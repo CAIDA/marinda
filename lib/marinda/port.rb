@@ -19,8 +19,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: port.rb,v 1.13 2009/03/17 01:05:32 youngh Exp $
 #############################################################################
 
 require 'ostruct'

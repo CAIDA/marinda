@@ -23,8 +23,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: client.rb,v 1.38 2009/03/17 00:51:15 youngh Exp $
 #############################################################################
 
 require 'socket'
@@ -32,6 +30,7 @@ require 'yaml'
 
 require 'marinda/msgcodes'
 require 'marinda/flagsets'
+require 'marinda/version'
 
 module Marinda
 
@@ -306,7 +305,7 @@ class Client
 
   def hello
     send "CCa*", HELLO_CMD, PROTOCOL_VERSION,
-      "Ruby client $Id: client.rb,v 1.38 2009/03/17 00:51:15 youngh Exp $"
+      "Marinda Ruby client v#{Marinda::VERSION}"
 
     response = receive HELLO_RESP
     @protocol, @flags, @remote_banner = response[1..3]

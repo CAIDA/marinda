@@ -19,8 +19,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: flagsets.rb,v 1.9 2009/03/17 00:58:29 youngh Exp $
 #############################################################################
 
 require 'marinda/flags'

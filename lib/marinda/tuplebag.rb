@@ -18,8 +18,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: tuplebag.rb,v 1.16 2009/03/17 01:10:04 youngh Exp $
 #############################################################################
 
 require 'yaml'

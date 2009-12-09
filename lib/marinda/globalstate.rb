@@ -18,8 +18,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: globalstate.rb,v 1.3 2009/03/17 00:59:48 youngh Exp $
 #############################################################################
 
 require 'amalgalite'

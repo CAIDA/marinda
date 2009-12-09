@@ -5,9 +5,11 @@
 require 'rubygems'
 require 'fileutils'
 
+load 'lib/marinda/version.rb'
+
 #---------------------------------------------------------------------------
 
-MY_VERSION = "0.10.0"
+MY_VERSION = Marinda::VERSION
 
 MY_EXTRA_FILES = ["README", "CHANGES", "COPYING"]
 

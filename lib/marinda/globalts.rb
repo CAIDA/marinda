@@ -36,8 +36,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: globalts.rb,v 1.15 2009/03/17 01:01:08 youngh Exp $
 #############################################################################
 
 require 'ostruct'
@@ -49,6 +47,7 @@ require 'marinda/port'
 require 'marinda/tuple'
 require 'marinda/region'
 require 'marinda/globalstate'
+require 'marinda/version'
 
 module Marinda
 
@@ -57,8 +56,6 @@ class GlobalSpace
   private
 
   include MuxMessageCodes
-
-  CVS_ID = "$Id: globaldemux.rb,v 1.37 2009/04/02 23:27:34 youngh Exp $"
 
   TIMEOUT = 5 # seconds of timeout for select
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
@@ -1081,7 +1078,8 @@ class GlobalSpace
   def generate_success_hello_message(context)
     # command, command_seqnum, protocol, node_id, session_id, banner
     contents = [ HELLO_RESP, 0, context.protocol, context.node_id,
-                 context.session_id, CVS_ID ].pack("CwNnwa*")
+                 context.session_id,
+             "Marinda Ruby global server v#{Marinda::VERSION}" ].pack("CwNnwa*")
     marshal_hello_contents contents
   end
 

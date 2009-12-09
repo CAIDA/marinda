@@ -21,8 +21,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: globalmux.rb,v 1.53 2009/04/02 23:29:38 youngh Exp $
 #############################################################################
 
 require 'ostruct'
@@ -34,6 +32,7 @@ require 'yaml'
 require 'marinda/list'
 require 'marinda/msgcodes'
 require 'marinda/tuple'
+require 'marinda/version'
 
 module Marinda
 
@@ -45,7 +44,6 @@ class GlobalSpaceMux
 
   include MuxMessageCodes
 
-  CVS_ID = "$Id: globalmux.rb,v 1.53 2009/04/02 23:29:38 youngh Exp $"
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
   READ_SIZE = 8192         # num bytes to read at once with sysread
 
@@ -342,8 +340,8 @@ class GlobalSpaceMux
   #--------------------------------------------------------------------------
 
   def generate_hello_message
-    contents = [HELLO_CMD, PROTOCOL_VERSION, @node_id, @session_id, CVS_ID].
-      pack("CNnwa*")
+    contents = [HELLO_CMD, PROTOCOL_VERSION, @node_id, @session_id,
+                "Marinda Ruby local server v#{Marinda::VERSION}"].pack("CNnwa*")
     marshal_contents 0, contents
   end
 

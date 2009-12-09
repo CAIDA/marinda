@@ -21,8 +21,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: connection.rb,v 1.24 2009/03/17 00:54:19 youngh Exp $
 #############################################################################
 
 require 'socket'

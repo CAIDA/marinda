@@ -19,8 +19,6 @@
 ##
 ## You should have received a copy of the GNU General Public License
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: purge-checkpoints,v 1.4 2009/03/08 07:54:05 youngh Exp $
 #############################################################################
 
 require 'rubygems'

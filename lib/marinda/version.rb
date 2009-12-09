@@ -1,8 +1,8 @@
 #############################################################################
-## A generic utility for implementing named bit flags in classes.
+## Marinda version information.
 ##
 ## --------------------------------------------------------------------------
-## Copyright (C) 2007, 2008, 2009 The Regents of the University of California.
+## Copyright (C) 2009 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -22,42 +22,6 @@
 
 module Marinda
 
-module Flags
+  VERSION = "0.10.0"
 
-  def self.included(mod)
-    metaclass = class << mod; self; end
-    metaclass.send(:define_method, :flag) do |name, value|
-      name = name.to_s
-      class_eval <<-END
-      #{name.upcase}_FLAG = #{value}
-
-      def #{name}?
-	@flags ||= 0
-	(@flags & #{name.upcase}_FLAG) != 0
-      end
-
-      def #{name}=(value)
-	@flags ||= 0
-        if value then @flags |= #{name.upcase}_FLAG
-                 else @flags &= ~#{name.upcase}_FLAG end
-      end
-      END
-    end
-
-    metaclass.send(:define_method, :read_flag) do |name, value|
-      name = name.to_s
-      class_eval <<-END
-      #{name.upcase}_FLAG = #{value}
-
-      def #{name}?
-	@flags ||= 0
-	(@flags & #{name.upcase}_FLAG) != 0
-      end
-      END
-    end
-    mod
-  end
-
-end
-
-end
+end  # module Marinda

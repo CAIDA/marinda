@@ -19,8 +19,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: request.rb,v 1.28 2009/03/17 01:08:39 youngh Exp $
 #############################################################################
 
 module Marinda
