@@ -255,15 +255,15 @@ NOTE: Be careful to indent all _<IP-address>: <node-ID>_ lines in
 --- 
 socket: /tmp/localts.sock
 node_id: 1
-demux_addr: foo.example.com
-demux_port: 8742
+global_server_addr: foo.example.com
+global_server_port: 8742
 ----
 
 TIP: The sample `local-config-nossl.yaml` contains the above config,
      so you can copy it to `local-config.yaml` and edit it as needed.
 
-The `demux_addr` line specifies the hostname or IP address of the
-global tuple-space server, and `demux_port` specifies the global
+The `global_server_addr` line specifies the hostname or IP address of the
+global tuple-space server, and `global_server_port` specifies the global
 server's listening port (that is, the `server_port` value in
 `global-config.yaml`).
 
@@ -340,8 +340,8 @@ out, since a `ca_file` line is provided.
 --- 
 socket: /tmp/localts.sock
 node_id: 1
-demux_addr: foo-server.example.com
-demux_port: 8742
+global_server_addr: foo-server.example.com
+global_server_port: 8742
 use_ssl: true
 cert: bar-client-cert.pem
 key: bar-client-key.INSECURE.pem
@@ -360,7 +360,7 @@ no configuration option to disable this check.
 NOTE: The local server may perform a reverse lookup of the server's
       IP address to find the fully-qualified domain name of the
       server--that is, it doesn't just use the value of the
-      `demux_addr` line for certificate validation.  Be sure to check
+      `global_server_addr` line for certificate validation.  Be sure to check
       that there is a correct, working entry in the reverse DNS zone
       for the server.
 

@@ -1,5 +1,6 @@
 --- 
 server_port: 8742
+#use_judy: true
 use_ssl: true
 check_client_name: true
 cert: foo-server-cert.pem

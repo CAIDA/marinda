@@ -1,4 +1,6 @@
 --- 
 socket: /tmp/localts.sock
+#socket_access: 0777
 node_id: 1
 localspace_only: true
+#use_judy: true

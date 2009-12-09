@@ -1,5 +1,8 @@
 --- 
 socket: /tmp/localts.sock
+#socket_access: 0777
 node_id: 1
-demux_addr: foo.example.com
-demux_port: 8742
+global_server_addr: foo.example.com
+global_server_port: 8742
+#use_judy: true
+
