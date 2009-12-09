@@ -31,8 +31,36 @@ $: << "."
 $: << "../lib"
 
 require 'socket'
+require 'ostruct'
+require 'optparse'
+
 require 'marinda'
 require 'marinda/verboseclient'
+
+$options = OpenStruct.new
+$options.clear = false
+
+opts = OptionParser.new
+
+opts.on("--[no-]clear", TrueClass,
+	"clear regions before test (#{$options.clear})") do |v|
+  $options.clear = v
+end
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
+#===========================================================================
+
 
 Thread.abort_on_exception = true
 
@@ -43,6 +71,10 @@ $c.hello
 $g = Marinda::VerboseClient.new $c.global_commons, "g"
 $local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
 $global_456 = Marinda::VerboseClient.new($c.open_port(456), "g123")
+
+def clear(ts)
+  while ts.takep []; end
+end
 
 def assert_equal(x, y)
   unless x == y
@@ -97,9 +129,16 @@ def test_basic_operations(ts, descr)
 
 end
 
+clear $c if $options.clear
 test_basic_operations $c, "local commons"
+
+clear $local_123 if $options.clear
 test_basic_operations $local_123, "local region 123"
+
+clear $g if $options.clear
 test_basic_operations $g, "global commons"
+
+clear $global_456 if $options.clear
 test_basic_operations $global_456, "global region 456"
 
 puts "\n\n### SUCCESS."
