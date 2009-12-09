@@ -60,6 +60,11 @@ opts.on("--root", "=DIR",
   $options.root_dir = v
 end
 
+opts.on("--process-name", "=STR",
+	"process name (#{$0})") do |v|
+  $options.process_name = v
+end
+
 opts.on("-d", "--[no-]detach", TrueClass,
 	"run as detached (daemon) process") do |v|
   $options.detach = v
@@ -76,6 +81,8 @@ rescue OptionParser::ParseError
   $stderr.puts opts
   exit 1
 end
+
+$0 = $options.process_name if $options.process_name
 
 #===========================================================================
 
@@ -99,7 +106,7 @@ $options.lock_file = $options.root_dir + "/localserver.LOCK"
 
 syslog_options = Syslog::LOG_PID
 syslog_options |= Syslog::LOG_PERROR unless $options.detach
-$log = Syslog.open("marinda-ls", syslog_options, Syslog::LOG_LOCAL0)
+$log = Syslog.open($0, syslog_options, Syslog::LOG_LOCAL0)
 Syslog.mask = Syslog::LOG_UPTO(Syslog::LOG_DEBUG) if $options.verbose
 
 def shutdown_cleanly
@@ -122,7 +129,7 @@ Signal.trap("HUP") do
   $reload_config = true
 end
 
-def log_failure(msg)
+def log_failure(msg)  # use 'marinda-ls' regardless of $0 for security
   path = $options.root_dir + "/marinda-ls-failed.#{Time.now.to_i}.#{$$}"
   File.open(path, "w") do |file|
     file.puts msg
@@ -190,9 +197,9 @@ end
 # Detach after creating the server socket to make it easier for the
 # user to detect a connection setup problem.
 if $options.detach
-  $stderr.puts "starting marinda-ls in background\n"
+  $stderr.puts "starting #{$0} in background\n"
   Marinda::daemonize()
-  $log.info "started marinda-ls in background"
+  $log.info "started %s in background", $0
 end
 
 exit_status = 0
@@ -205,8 +212,8 @@ begin
 
 rescue
   short_msg = $!.class.name + ": " + $!.to_s
-  msg = sprintf "marinda-ls: exiting on uncaught exception " +
-    "at top-level: %p; backtrace: %s", $!, $!.backtrace.join(" <= ")
+  msg = sprintf "%s: exiting on uncaught exception " +
+    "at top-level: %p; backtrace: %s", $0, $!, $!.backtrace.join(" <= ")
   $log.err "%s", msg
   log_failure msg rescue nil
   exit_status = 1
