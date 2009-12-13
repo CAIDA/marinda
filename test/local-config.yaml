@@ -1,8 +1,9 @@
 --- 
 socket: /tmp/localts-test.sock
+#socket_access: 0777
 node_id: 1
-demux_addr: 127.0.0.1
-demux_port: 8743
+global_server_addr: 127.0.0.1
+global_server_port: 8743
 #localspace_only: true
 
 use_judy: true
