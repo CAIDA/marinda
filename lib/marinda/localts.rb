@@ -343,9 +343,6 @@ class LocalSpace
       channel = Channel.new flags, self, @commons_port, private_port, sock
       @channels[private_port] << channel
 
-      # XXX can't set TCP_NODELAY: Errno::EINVAL: Invalid argument
-      # sock.setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
-
       sock.extend ConnectionState
       sock.__connection_state = :connected
       sock.__connection = channel
@@ -398,10 +395,6 @@ class LocalSpace
 
     channel = Channel.new flags, self, public_port, private_port, sockets[0]
     @channels[private_port] << channel
-
-    # XXX not sure disabling Nagle is required or (universally) supported
-    # sockets[0].setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
-    # sockets[1].setsockopt Socket::IPPROTO_TCP, Socket::TCP_NODELAY, true
 
     sockets[0].extend ConnectionState
     sockets[0].__connection_state = :connected
