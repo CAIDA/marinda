@@ -1,0 +1,264 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## Tests the basic asynchronous operations of read_async, readp_async,
+## take_async, and takep_async.
+##
+## You must start up marinda-gs and marinda-ls with empty regions prior to
+## running this test script, or use --clear.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2009 The Regents of the University of California.
+## 
+## This file is part of Marinda.
+## 
+## Marinda is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+## 
+## Marinda is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
+##
+## $Id: $
+#############################################################################
+
+$: << "."
+$: << "../lib"
+
+require 'socket'
+require 'ostruct'
+require 'optparse'
+
+require 'marinda'
+require 'marinda/verboseclient'
+
+$options = OpenStruct.new
+$options.clear = false
+
+opts = OptionParser.new
+
+opts.on("--[no-]clear", TrueClass,
+	"clear regions before test (#{$options.clear})") do |v|
+  $options.clear = v
+end
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
+#===========================================================================
+
+
+Thread.abort_on_exception = true
+
+SOCKET = "/tmp/localts-test.sock"
+s = UNIXSocket.open SOCKET
+$c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
+$c.hello
+$g = Marinda::VerboseClient.new $c.global_commons, "g"
+$local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
+$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g456")
+
+$loop = Marinda::ClientEventLoop.new
+
+if $options.verbose
+  Marinda::Client.debug = true
+  Marinda::ClientEventLoop.debug = true
+end
+
+def clear(ts)
+  while ts.takep []; end
+end
+
+def assert_equal(x, y)
+  unless x == y
+    printf "FAILED: %p doesn't equal %p\n", x, y
+    exit 1
+  else
+    printf "ok %p\n", y
+  end
+end
+
+def test_singleton_async(ts, method, template)
+  result = nil
+  ts.__send__(method, template) do |tuple|
+    result = tuple
+    $loop.suspend
+  end  
+  $loop.start
+  result
+end
+
+def test_read_async(ts, template)
+  test_singleton_async ts, :read_async, template
+end
+
+def test_readp_async(ts, template)
+  test_singleton_async ts, :readp_async, template
+end
+
+def test_take_async(ts, template)
+  test_singleton_async ts, :take_async, template
+end
+
+def test_takep_async(ts, template)
+  test_singleton_async ts, :takep_async, template
+end
+
+def test_write_read_isolated(ts, t)
+  ts.write t
+  assert_equal(test_read_async(ts, []), t)
+  assert_equal(test_read_async(ts, t), t)
+  assert_equal(test_readp_async(ts, []), t)
+  assert_equal(test_readp_async(ts, t), t)
+end
+
+def test_basic_operations(ts, descr)
+  puts "\n::: testing basic operations in #{descr} :::"
+
+  $loop.add_source ts
+
+  ts.write [1,2,3,4,5,6]
+  assert_equal(test_take_async(ts, []), [1,2,3,4,5,6])
+
+  ts.write [1,2,3,4,5,6]
+  assert_equal(test_takep_async(ts, []), [1,2,3,4,5,6])
+
+  test_write_read_isolated ts, [7, 8]
+  assert_equal(test_take_async(ts, []), [7, 8])
+
+  test_write_read_isolated ts, ["abc", 5, "def"]
+  assert_equal(test_take_async(ts, []), ["abc", 5, "def"])
+
+  test_write_read_isolated ts, [true, false]
+  assert_equal(test_take_async(ts, []), [true, false])
+
+  ts.write [3, 7, 9]
+  ts.write [11, 13, 17]
+  ts.write ["foo", "bar"]
+  ts.write ["foo", "bar", 17]
+  ts.write [true, "bar", 2.75]
+
+  assert_equal(test_read_async(ts, [11, 13, 17]), [11, 13, 17])
+  assert_equal(test_read_async(ts, [nil, 13, 17]), [11, 13, 17])
+  assert_equal(test_read_async(ts, [nil, nil, 17]), [11, 13, 17])
+  assert_equal(test_read_async(ts, [nil, nil, nil]), [3, 7, 9])
+  assert_equal(test_read_async(ts, [nil, nil]),["foo", "bar"])
+  assert_equal(test_read_async(ts, [nil, 13, nil]), [11, 13, 17])
+  assert_equal(test_read_async(ts, ["foo", "bar", nil]), ["foo", "bar", 17])
+  assert_equal(test_read_async(ts, [nil, "bar", nil]), ["foo", "bar", 17])
+  assert_equal(test_read_async(ts, [true, "bar", nil]), [true, "bar", 2.75])
+
+  assert_equal(test_readp_async(ts, [11, 130, 17]), nil)
+  assert_equal(test_readp_async(ts, [nil, 13, 170]), nil)
+  assert_equal(test_readp_async(ts, [nil, nil, 170]), nil)
+  assert_equal(test_readp_async(ts, [nil, nil, nil, nil]), nil)
+  assert_equal(test_readp_async(ts, [nil]), nil)
+  assert_equal(test_readp_async(ts, [nil, 130, nil]), nil)
+  assert_equal(test_readp_async(ts, ["foo", "bar", "baz"]), nil)
+  assert_equal(test_readp_async(ts, [nil, nil, "bar"]), nil)
+  assert_equal(test_readp_async(ts, [false, "bar", nil]), nil)
+
+  $loop.remove_source ts
+end
+
+#############################################################################
+
+clear $c if $options.clear
+test_basic_operations $c, "local commons"
+
+clear $local_123 if $options.clear
+test_basic_operations $local_123, "local region 123"
+
+clear $g if $options.clear
+test_basic_operations $g, "global commons"
+
+clear $global_456 if $options.clear
+test_basic_operations $global_456, "global region 456"
+
+#===========================================================================
+
+def test_event_loop_multi_source
+  puts "\n::: testing multiple sources :::"
+
+  $loop.add_source $c
+  $loop.add_source $local_123
+  $loop.add_source $g
+  $loop.add_source $global_456
+
+  clear $c
+  clear $local_123
+  clear $g
+  clear $global_456
+  test_event_loop_multi_source_populate()
+  test_event_loop_multi_source_execute :read_async
+  test_event_loop_multi_source_execute :readp_async
+  test_event_loop_multi_source_execute :take_async
+
+  test_event_loop_multi_source_populate()
+  test_event_loop_multi_source_execute :takep_async
+
+  $loop.remove_source $c
+  $loop.remove_source $local_123
+  $loop.remove_source $g
+  $loop.remove_source $global_456
+end
+
+
+def test_event_loop_multi_source_populate
+  $c.write ["c", 1, 2, 3]
+  $local_123 .write ["local_123", 4, 5, 6]
+  $g.write ["g", 7, 8, 9]
+  $global_456 .write ["global_456", 10, 11, 12]
+end
+
+
+def test_event_loop_multi_source_execute(operation)
+  tasks = ["c", "local_123", "g", "global_456"]
+
+  $c.__send__ operation, [] do |tuple|
+    assert_equal(tuple, ["c", 1, 2, 3])
+    tasks.delete "c"
+    $loop.suspend if tasks.empty?
+  end
+
+  $local_123.__send__ operation, [] do |tuple|
+    assert_equal(tuple, ["local_123", 4, 5, 6])
+    tasks.delete "local_123"
+    $loop.suspend if tasks.empty?
+  end
+
+  $g.__send__ operation, [] do |tuple|
+    assert_equal(tuple, ["g", 7, 8, 9])
+    tasks.delete "g"
+    $loop.suspend if tasks.empty?
+  end
+
+  $global_456.__send__ operation, [] do |tuple|
+    assert_equal(tuple, ["global_456", 10, 11, 12])
+    tasks.delete "global_456"
+    $loop.suspend if tasks.empty?
+  end
+  
+  $loop.start
+end
+
+
+test_event_loop_multi_source()
+
+
+puts "\n\n### SUCCESS."

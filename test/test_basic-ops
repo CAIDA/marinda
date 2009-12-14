@@ -70,7 +70,11 @@ $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c.hello
 $g = Marinda::VerboseClient.new $c.global_commons, "g"
 $local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
-$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g123")
+$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g456")
+
+if $options.verbose
+  Marinda::Client.debug = true
+end
 
 def clear(ts)
   while ts.takep []; end
@@ -126,6 +130,16 @@ def test_basic_operations(ts, descr)
   assert_equal(ts.read(["foo", "bar", nil]), ["foo", "bar", 17])
   assert_equal(ts.read([nil, "bar", nil]), ["foo", "bar", 17])
   assert_equal(ts.read([true, "bar", nil]), [true, "bar", 2.75])
+
+  assert_equal(ts.readp([11, 130, 17]), nil)
+  assert_equal(ts.readp([nil, 13, 170]), nil)
+  assert_equal(ts.readp([nil, nil, 170]), nil)
+  assert_equal(ts.readp([nil, nil, nil, nil]), nil)
+  assert_equal(ts.readp([nil]), nil)
+  assert_equal(ts.readp([nil, 130, nil]), nil)
+  assert_equal(ts.readp(["foo", "bar", "baz"]), nil)
+  assert_equal(ts.readp([nil, nil, "bar"]), nil)
+  assert_equal(ts.readp([false, "bar", nil]), nil)
 
 end
 
