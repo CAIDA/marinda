@@ -1,7 +1,8 @@
 #!/usr/bin/env ruby
 
 #############################################################################
-## Tests the iteration operations read_all, take_all, monitor, and consume.
+## Tests the asynchronous iteration operations read_all_async, take_all_async,
+## monitor_async, and consume_async.
 ##
 ## Unlike test_basic-ops, you don't have to start up marinda-gs and marinda-ls
 ## with empty regions to run this test script because this script clears
@@ -31,8 +32,30 @@ $: << "../lib"
 
 require 'thread'
 require 'socket'
+require 'ostruct'
+require 'optparse'
+
 require 'marinda'
 require 'marinda/verboseclient'
+
+$options = OpenStruct.new
+$options.clear = false
+
+opts = OptionParser.new
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
+#===========================================================================
 
 Thread.abort_on_exception = true
 
@@ -43,6 +66,18 @@ $c.hello
 $c2 = Marinda::VerboseClient.new($c.duplicate, "c2")
 $g = Marinda::VerboseClient.new $c.global_commons, "g"
 $g2 = Marinda::VerboseClient.new($g.duplicate, "g2")
+
+$loop = Marinda::ClientEventLoop.new
+$loop.add_source $c
+#$loop.add_source $c2
+$loop.add_source $g
+#$loop.add_source $g2
+
+if $options.verbose
+  Marinda::Client.debug = true
+  Marinda::ClientEventLoop.debug = true
+end
+
 
 def assert_equal(x, y)
   unless x == y
@@ -83,76 +118,78 @@ end
 
 
 #----------------------------------------------------------------------------
-def test_read_all(descr, ts, template, expected)
-  puts "\n::: testing read_all #{template.inspect} in #{descr} :::"
+def test_read_all_async(descr, ts, template, expected)
+  puts "\n::: testing read_all_async #{template.inspect} in #{descr} :::"
 
   result = []
-  ts.read_all template do |tuple|
+  ts.read_all_async template do |tuple|
     result << tuple
   end
 
+  $loop.start()
   assert_equal(result, expected)
 end
 
 
-def test_every_read_all(descr, ts)
+def test_every_read_all_async(descr, ts)
   clear ts
   populate ts
 
-  test_read_all descr, ts, [], ALL_TUPLES
+  test_read_all_async descr, ts, [], ALL_TUPLES
 
-  test_read_all descr, ts, [1, nil, nil, nil],
+  test_read_all_async descr, ts, [1, nil, nil, nil],
     [[1,10,20,30], [1,11,20,30], [1,12,20,30], [1,13,20,30], [1,14,20,30]]
 
-  test_read_all descr, ts, [2, nil, nil, nil],
+  test_read_all_async descr, ts, [2, nil, nil, nil],
     [[2,40,50,60], [2,41,50,60], [2,42,50,60]]
 
-  test_read_all descr, ts, [3, nil, nil, nil], [[3,70,80,90]]
+  test_read_all_async descr, ts, [3, nil, nil, nil], [[3,70,80,90]]
 
-  test_read_all descr, ts, [4, nil, nil, nil], []
+  test_read_all_async descr, ts, [4, nil, nil, nil], []
 end
 
 
 #----------------------------------------------------------------------------
-def test_take_all(descr, ts, template, expected, remainder)
-  puts "\n::: testing take_all #{template.inspect} in #{descr} :::"
+def test_take_all_async(descr, ts, template, expected, remainder)
+  puts "\n::: testing take_all_async #{template.inspect} in #{descr} :::"
 
   clear ts
   populate ts
 
   result = []
-  ts.take_all template do |tuple|
+  ts.take_all_async template do |tuple|
     result << tuple
   end
 
+  $loop.start()
   assert_equal(result, expected)
   check_remainder ts, remainder
 end
 
 
-def test_every_take_all(descr, ts)
-  test_take_all descr, ts, [], ALL_TUPLES, []
+def test_every_take_all_async(descr, ts)
+  test_take_all_async descr, ts, [], ALL_TUPLES, []
 
-  test_take_all descr, ts, [1, nil, nil, nil],
+  test_take_all_async descr, ts, [1, nil, nil, nil],
     [[1,10,20,30], [1,11,20,30], [1,12,20,30], [1,13,20,30], [1,14,20,30]],
     [[2,40,50,60], [2,41,50,60], [3,70,80,90], [2,42,50,60]] 
 
-  test_take_all descr, ts, [2, nil, nil, nil],
+  test_take_all_async descr, ts, [2, nil, nil, nil],
     [[2,40,50,60], [2,41,50,60], [2,42,50,60]],
     [[1,10,20,30], [1,11,20,30], [3,70,80,90], [1,12,20,30], [1,13,20,30],
      [1,14,20,30]]
 
-  test_take_all descr, ts, [3, nil, nil, nil], [[3,70,80,90]],
+  test_take_all_async descr, ts, [3, nil, nil, nil], [[3,70,80,90]],
     [[1,10,20,30], [2,40,50,60], [2,41,50,60], [1,11,20,30],
      [2,42,50,60], [1,12,20,30], [1,13,20,30], [1,14,20,30]]
 
-  test_take_all descr, ts, [4, nil, nil, nil], [], ALL_TUPLES
+  test_take_all_async descr, ts, [4, nil, nil, nil], [], ALL_TUPLES
 end
 
 
 #----------------------------------------------------------------------------
-def test_monitor(descr, ts, ts2, template, preload, last_tuple, expected)
-  puts "\n::: testing monitor #{template.inspect} in #{descr} :::"
+def test_monitor_async(descr, ts, ts2, template, preload, last_tuple, expected)
+  puts "\n::: testing monitor_async #{template.inspect} in #{descr} :::"
 
   clear ts
   q = Queue.new
@@ -169,35 +206,36 @@ def test_monitor(descr, ts, ts2, template, preload, last_tuple, expected)
 
   q.deq  # wait for :start
   result = []
-  ts.monitor template do |tuple|
+  ts.monitor_async template do |tuple|
     puts "monitor >> " + tuple.inspect
     result << tuple
-    break if tuple == last_tuple
+    ts.cancel() if tuple == last_tuple
   end
 
+  $loop.start()
   q.deq  # wait for :done
   assert_equal(result, expected)
 end
 
 
-def test_every_monitor(descr, ts, ts2)
-  test_monitor descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES
+def test_every_monitor_async(descr, ts, ts2)
+  test_monitor_async descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES
 
-  test_monitor descr, ts, ts2, [1, nil, nil, nil], 1, [1,14,20,30],
+  test_monitor_async descr, ts, ts2, [1, nil, nil, nil], 1, [1,14,20,30],
     [[1,10,20,30], [1,11,20,30], [1,12,20,30], [1,13,20,30], [1,14,20,30]]
 
-  test_monitor descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
+  test_monitor_async descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
     [[2,40,50,60], [2,41,50,60], [2,42,50,60]]
 
-  test_monitor descr, ts, ts2, [3, nil, nil, nil], 5, [3,70,80,90],
+  test_monitor_async descr, ts, ts2, [3, nil, nil, nil], 5, [3,70,80,90],
     [[3,70,80,90]]
 end
 
 
 #----------------------------------------------------------------------------
-def test_consume(descr, ts, ts2, template, preload, last_tuple, expected,
-                 remainder)
-  puts "\n::: testing consume #{template.inspect} in #{descr} :::"
+def test_consume_async(descr, ts, ts2, template, preload, last_tuple,
+                       expected, remainder)
+  puts "\n::: testing consume_async #{template.inspect} in #{descr} :::"
 
   clear ts
   q = Queue.new
@@ -214,31 +252,32 @@ def test_consume(descr, ts, ts2, template, preload, last_tuple, expected,
 
   q.deq  # wait for :start
   result = []
-  ts.consume template do |tuple|
+  ts.consume_async template do |tuple|
     puts "consume >> " + tuple.inspect
     result << tuple
-    break if tuple == last_tuple
+    ts.cancel() if tuple == last_tuple
   end
 
+  $loop.start()
   q.deq  # wait for :done
   assert_equal(result, expected)
   check_remainder ts, remainder
 end
 
 
-def test_every_consume(descr, ts, ts2)
-  test_consume descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES, []
+def test_every_consume_async(descr, ts, ts2)
+  test_consume_async descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES, []
 
-  test_consume descr, ts, ts2, [1, nil, nil, nil], 1, [1,14,20,30],
+  test_consume_async descr, ts, ts2, [1, nil, nil, nil], 1, [1,14,20,30],
     [[1,10,20,30], [1,11,20,30], [1,12,20,30], [1,13,20,30], [1,14,20,30]],
     [[2,40,50,60], [2,41,50,60], [3,70,80,90], [2,42,50,60]]
 
-  test_consume descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
+  test_consume_async descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
     [[2,40,50,60], [2,41,50,60], [2,42,50,60]],
     [[1,10,20,30], [1,11,20,30], [3,70,80,90], [1,12,20,30], [1,13,20,30],
      [1,14,20,30]]
 
-  test_consume descr, ts, ts2, [3, nil, nil, nil], 5, [3,70,80,90],
+  test_consume_async descr, ts, ts2, [3, nil, nil, nil], 5, [3,70,80,90],
     [[3,70,80,90]],
     [[1,10,20,30], [2,40,50,60], [2,41,50,60], [1,11,20,30],
      [2,42,50,60], [1,12,20,30], [1,13,20,30], [1,14,20,30]]
@@ -246,8 +285,9 @@ end
 
 
 #----------------------------------------------------------------------------
-def test_monitor_stream(descr, ts, ts2, template, preload, last_tuple, expected)
-  puts "\n::: testing monitor_stream #{template.inspect} in #{descr} :::"
+def test_monitor_stream_async(descr, ts, ts2, template, preload, last_tuple,
+                              expected)
+  puts "\n::: testing monitor_stream_async #{template.inspect} in #{descr} :::"
 
   clear ts
   q = Queue.new
@@ -266,36 +306,37 @@ def test_monitor_stream(descr, ts, ts2, template, preload, last_tuple, expected)
 
   q.deq  # wait for :start
   result = []
-  ts.monitor_stream template do |tuple|
+  ts.monitor_stream_async template do |tuple|
     puts "monitor_stream >> " + tuple.inspect
     result << tuple
-    break if tuple == last_tuple
+    ts.cancel() if tuple == last_tuple
     sleep 0.3
   end
 
+  $loop.start()
   q.deq  # wait for :done
   assert_equal(result, expected)
 end
 
 
-def test_every_monitor_stream(descr, ts, ts2)
-  test_monitor_stream descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES
+def test_every_monitor_stream_async(descr, ts, ts2)
+  test_monitor_stream_async descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES
 
-  test_monitor_stream descr, ts, ts2, [1, nil, nil, nil], 1, [1,14,20,30],
+  test_monitor_stream_async descr, ts, ts2, [1, nil, nil, nil], 1, [1,14,20,30],
     [[1,10,20,30], [1,11,20,30], [1,12,20,30], [1,13,20,30], [1,14,20,30]]
 
-  test_monitor_stream descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
+  test_monitor_stream_async descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
     [[2,40,50,60], [2,41,50,60], [2,42,50,60]]
 
-  test_monitor_stream descr, ts, ts2, [3, nil, nil, nil], 5, [3,70,80,90],
+  test_monitor_stream_async descr, ts, ts2, [3, nil, nil, nil], 5, [3,70,80,90],
     [[3,70,80,90]]
 end
 
 
 #----------------------------------------------------------------------------
-def test_consume_stream(descr, ts, ts2, template, preload, last_tuple, expected,
-                        remainder)
-  puts "\n::: testing consume_stream #{template.inspect} in #{descr} :::"
+def test_consume_stream_async(descr, ts, ts2, template, preload, last_tuple,
+                              expected, remainder)
+  puts "\n::: testing consume_stream_async #{template.inspect} in #{descr} :::"
 
   clear ts
   q = Queue.new
@@ -314,32 +355,33 @@ def test_consume_stream(descr, ts, ts2, template, preload, last_tuple, expected,
 
   q.deq  # wait for :start
   result = []
-  ts.consume_stream template do |tuple|
+  ts.consume_stream_async template do |tuple|
     puts "consume_stream >> " + tuple.inspect
     result << tuple
-    break if tuple == last_tuple
+    ts.cancel() if tuple == last_tuple
     sleep 0.3
   end
 
+  $loop.start()
   q.deq  # wait for :done
   assert_equal(result, expected)
   check_remainder ts, remainder
 end
 
 
-def test_every_consume_stream(descr, ts, ts2)
-  test_consume_stream descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES, []
+def test_every_consume_stream_async(descr, ts, ts2)
+  test_consume_stream_async descr, ts, ts2, [], 1, [1,14,20,30], ALL_TUPLES, []
 
-  test_consume_stream descr, ts, ts2, [1, nil, nil, nil], 4, [1,14,20,30],
+  test_consume_stream_async descr, ts, ts2, [1, nil, nil, nil], 4, [1,14,20,30],
     [[1,10,20,30], [1,11,20,30], [1,12,20,30], [1,13,20,30], [1,14,20,30]],
     [[2,40,50,60], [2,41,50,60], [3,70,80,90], [2,42,50,60]]
 
-  test_consume_stream descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
+  test_consume_stream_async descr, ts, ts2, [2, nil, nil, nil], 0, [2,42,50,60],
     [[2,40,50,60], [2,41,50,60], [2,42,50,60]],
     [[1,10,20,30], [1,11,20,30], [3,70,80,90], [1,12,20,30], [1,13,20,30],
      [1,14,20,30]]
 
-  test_consume_stream descr, ts, ts2, [3, nil, nil, nil], 3, [3,70,80,90],
+  test_consume_stream_async descr, ts, ts2, [3, nil, nil, nil], 3, [3,70,80,90],
     [[3,70,80,90]],
     [[1,10,20,30], [2,40,50,60], [2,41,50,60], [1,11,20,30],
      [2,42,50,60], [1,12,20,30], [1,13,20,30], [1,14,20,30]]
@@ -350,23 +392,23 @@ end
 
 puts "\n\n==[ local ]=======================================================\n"
 
-test_every_read_all "local commons", $c
+test_every_read_all_async "local commons", $c
 
 # The remaining tests may use read_all, so read_all should be correct by now.
 
-test_every_take_all "local commons", $c
-test_every_monitor "local commons", $c, $c2
-test_every_consume "local commons", $c, $c2
-test_every_monitor_stream "local commons", $c, $c2
-test_every_consume_stream "local commons", $c, $c2
+test_every_take_all_async "local commons", $c
+test_every_monitor_async "local commons", $c, $c2
+test_every_consume_async "local commons", $c, $c2
+test_every_monitor_stream_async "local commons", $c, $c2
+test_every_consume_stream_async "local commons", $c, $c2
 
 puts "\n\n==[ global ]======================================================\n"
 
-test_every_take_all "global commons", $g
-test_every_read_all "global commons", $g
-test_every_monitor "global commons", $g, $g2
-test_every_consume "global commons", $g, $g2
-test_every_monitor_stream "global commons", $g, $g2
-test_every_consume_stream "global commons", $g, $g2
+test_every_take_all_async "global commons", $g
+test_every_read_all_async "global commons", $g
+test_every_monitor_async "global commons", $g, $g2
+test_every_consume_async "global commons", $g, $g2
+test_every_monitor_stream_async "global commons", $g, $g2
+test_every_consume_stream_async "global commons", $g, $g2
 
 puts "\n\n### SUCCESS."

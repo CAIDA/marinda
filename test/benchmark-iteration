@@ -32,10 +32,30 @@ $: << "../lib"
 
 require 'thread'
 require 'socket'
+require 'ostruct'
+require 'optparse'
 require 'benchmark'
 
 require 'marinda'
 require 'marinda/verboseclient'
+
+$options = OpenStruct.new
+$options.async = true
+
+opts = OptionParser.new
+
+opts.on("--[no-]async", TrueClass,  "benchmark async operations") do |v|
+  $options.async = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
 
 Thread.abort_on_exception = true
 
@@ -68,23 +88,52 @@ def bm_x_all(descr, ts, template, n)
 
   puts
   puts "Clearing and populating region ..."
-  Benchmark.bm(8) do |bm|
+  Benchmark.bm(14) do |bm|
     bm.report("clear") do clear ts end
     bm.report("populate") do populate ts, n end
   end
 
   puts
-  Benchmark.bm(8) do |bm|
+  Benchmark.bm(14) do |bm|
     bm.report("read_all") do
-      ts.read_all template do |tuple|
-      end
+      ts.read_all template do |tuple|; end
     end
 
     bm.report("take_all") do
-      ts.take_all template do |tuple|
-      end
+      ts.take_all template do |tuple|; end
     end
   end
+end
+
+#----------------------------------------------------------------------------
+def bm_x_async_all(descr, ts, template, n)
+  puts "\n::: benchmark async read_all/take_all #{template.inspect} of " +
+    "#{n} tuples in #{descr} :::"
+
+  loop = Marinda::ClientEventLoop.new
+  loop.add_source ts
+
+  puts
+  puts "Clearing and populating region ..."
+  Benchmark.bm(14) do |bm|
+    bm.report("clear") do clear ts end
+    bm.report("populate") do populate ts, n end
+  end
+
+  puts
+  Benchmark.bm(14) do |bm|
+    bm.report("read_all_async") do
+      ts.read_all_async template do |tuple|; end
+      loop.start
+    end
+
+    bm.report("take_all_async") do
+      ts.take_all_async template do |tuple|; end
+      loop.start
+    end
+  end
+
+  loop.remove_source ts
 end
 
 #############################################################################
@@ -102,10 +151,12 @@ puts "\n\n==[ local ]=======================================================\n"
 
 bm_x_all "local commons", $c, [], 500
 bm_x_all "local commons", $c, [], 5000
+bm_x_async_all "local commons", $c, [], 5000 if $options.async
 
 puts "\n\n==[ global ]======================================================\n"
 
 bm_x_all "global commons", $g, [], 500
 bm_x_all "global commons", $g, [], 5000
+bm_x_async_all "global commons", $g, [], 5000 if $options.async
 
 puts "\n\n### DONE."

@@ -24,8 +24,6 @@
 ## 
 ## You should have received a copy of the GNU General Public License
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
-##
-## $Id: $
 #############################################################################
 
 $: << "."
@@ -97,9 +95,8 @@ def test_singleton_async(ts, method, template)
   result = nil
   ts.__send__(method, template) do |tuple|
     result = tuple
-    $loop.suspend
   end  
-  $loop.start
+  $loop.start()
   result
 end
 
@@ -228,30 +225,20 @@ end
 
 
 def test_event_loop_multi_source_execute(operation)
-  tasks = ["c", "local_123", "g", "global_456"]
-
   $c.__send__ operation, [] do |tuple|
     assert_equal(tuple, ["c", 1, 2, 3])
-    tasks.delete "c"
-    $loop.suspend if tasks.empty?
   end
 
   $local_123.__send__ operation, [] do |tuple|
     assert_equal(tuple, ["local_123", 4, 5, 6])
-    tasks.delete "local_123"
-    $loop.suspend if tasks.empty?
   end
 
   $g.__send__ operation, [] do |tuple|
     assert_equal(tuple, ["g", 7, 8, 9])
-    tasks.delete "g"
-    $loop.suspend if tasks.empty?
   end
 
   $global_456.__send__ operation, [] do |tuple|
     assert_equal(tuple, ["global_456", 10, 11, 12])
-    tasks.delete "global_456"
-    $loop.suspend if tasks.empty?
   end
   
   $loop.start

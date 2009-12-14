@@ -115,12 +115,12 @@ class Client
     @dispatch[TAKEP_CMD] = method :async_receive_tuple
     @dispatch[TAKE_PRIV_CMD] = method :async_receive_tuple
     @dispatch[TAKEP_PRIV_CMD] = method :async_receive_tuple
-    @dispatch[READ_ALL_CMD] = method :async_iteration_command
-    @dispatch[TAKE_ALL_CMD] = method :async_iteration_command
-    @dispatch[MONITOR_CMD] = method :async_iteration_command
-    @dispatch[CONSUME_CMD] = method :async_iteration_command
-    @dispatch[MONITOR_STREAM_CMD] = method :async_stream_command
-    @dispatch[CONSUME_STREAM_CMD] = method :async_stream_command
+    @dispatch[READ_ALL_CMD] = method :async_execute_iteration
+    @dispatch[TAKE_ALL_CMD] = method :async_execute_iteration
+    @dispatch[MONITOR_CMD] = method :async_execute_iteration
+    @dispatch[CONSUME_CMD] = method :async_execute_iteration
+    @dispatch[MONITOR_STREAM_CMD] = method :async_execute_stream_iteration
+    @dispatch[CONSUME_STREAM_CMD] = method :async_execute_stream_iteration
 
     @global_commons_channel = nil  # cached
   end
@@ -334,10 +334,13 @@ class Client
 	block.call tuple
 	needs_cancel = false
 
-	send_cont "C", NEXT_CMD if needs_next
+        # Note: Guard against block.call having called Client#cancel, which
+        #       will cause @active_command to be nil.
+	send_cont "C", NEXT_CMD if needs_next && @active_command
       end
     ensure
-      send_cont "C", CANCEL_CMD if needs_cancel
+      # Note: Guard against block.call having called Client#cancel.
+      send_cont "C", CANCEL_CMD if needs_cancel && @active_command
       @active_command = nil
     end
   end
@@ -355,13 +358,43 @@ class Client
   end
 
 
-  def async_iteration_command
-
+  def async_execute_iteration(payload, file)
+    async_execute_general_iteration payload, file, true
   end
 
 
-  def async_stream_command
+  def async_execute_stream_iteration(payload, file)
+    async_execute_general_iteration payload, file, false
+  end
 
+
+  # Execute the iteration of read_all, take_all, monitor, consume,
+  # monitor_stream, and consume_stream.
+  def async_execute_general_iteration(payload, file, needs_next)
+    code, tuple = decode_response payload, file,
+      [TUPLE_RESP, TUPLE_NIL_RESP, TUPLE_WITH_RIGHTS_RESP]
+    if tuple
+      needs_cancel = true
+      begin
+        @async_callback.call tuple
+        needs_cancel = false
+
+        # Note: Guard against @async_callback having called Client#cancel,
+        #       which will cause @active_command to be nil.
+        send_cont "C", NEXT_CMD if needs_next && @active_command
+
+      ensure
+        # Note: Guard against @async_callback having called Client#cancel.
+        if needs_cancel && @active_command
+          send_cont "C", CANCEL_CMD
+          @active_command = nil
+          @async_callback = nil
+        end
+      end
+    else
+      @active_command = nil
+      @async_callback = nil
+    end
   end
 
 
@@ -487,6 +520,7 @@ class Client
 
 
   def read_all(template, &block)
+    raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
     @active_command = READ_ALL_CMD
@@ -496,6 +530,7 @@ class Client
 
 
   def take_all(template, &block)
+    raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     @active_command = TAKE_ALL_CMD
@@ -505,6 +540,7 @@ class Client
 
 
   def monitor(template, &block)
+    raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
     @active_command = MONITOR_CMD
@@ -514,6 +550,7 @@ class Client
 
 
   def consume(template, &block)
+    raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     @active_command = CONSUME_CMD
@@ -523,6 +560,7 @@ class Client
 
 
   def monitor_stream(template, &block)
+    raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
     @active_command = MONITOR_STREAM_CMD
@@ -532,11 +570,21 @@ class Client
 
 
   def consume_stream(template, &block)
+    raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     @active_command = CONSUME_STREAM_CMD
     send "Ca*", CONSUME_STREAM_CMD, YAML.dump(template)
     execute_iteration false, block
+  end
+
+
+  def cancel
+    if @active_command
+      send_cont "C", CANCEL_CMD
+      @active_command = nil
+      @async_callback = nil
+    end
   end
 
 
@@ -647,6 +695,66 @@ class Client
     raise ClientError if @active_command
     send "Ca*", TAKEP_PRIV_CMD, YAML.dump(template)
     @active_command = @dispatch[TAKEP_PRIV_CMD]
+    @async_callback = block
+  end
+
+
+  def read_all_async(template, &block)
+    raise ArgumentError, "missing block" unless block
+    raise ClientError if @active_command
+    raise PrivilegeError unless can_read?
+    send "Ca*", READ_ALL_CMD, YAML.dump(template)
+    @active_command = @dispatch[READ_ALL_CMD]
+    @async_callback = block
+  end
+
+
+  def take_all_async(template, &block)
+    raise ArgumentError, "missing block" unless block
+    raise ClientError if @active_command
+    raise PrivilegeError unless can_take?
+    send "Ca*", TAKE_ALL_CMD, YAML.dump(template)
+    @active_command = @dispatch[TAKE_ALL_CMD]
+    @async_callback = block
+  end
+
+
+  def monitor_async(template, &block)
+    raise ArgumentError, "missing block" unless block
+    raise ClientError if @active_command
+    raise PrivilegeError unless can_read?
+    send "Ca*", MONITOR_CMD, YAML.dump(template)
+    @active_command = @dispatch[MONITOR_CMD]
+    @async_callback = block
+  end
+
+
+  def consume_async(template, &block)
+    raise ArgumentError, "missing block" unless block
+    raise ClientError if @active_command
+    raise PrivilegeError unless can_take?
+    send "Ca*", CONSUME_CMD, YAML.dump(template)
+    @active_command = @dispatch[CONSUME_CMD]
+    @async_callback = block
+  end
+
+
+  def monitor_stream_async(template, &block)
+    raise ArgumentError, "missing block" unless block
+    raise ClientError if @active_command
+    raise PrivilegeError unless can_read?
+    send "Ca*", MONITOR_STREAM_CMD, YAML.dump(template)
+    @active_command = @dispatch[MONITOR_STREAM_CMD]
+    @async_callback = block
+  end
+
+
+  def consume_stream_async(template, &block)
+    raise ArgumentError, "missing block" unless block
+    raise ClientError if @active_command
+    raise PrivilegeError unless can_take?
+    send "Ca*", CONSUME_STREAM_CMD, YAML.dump(template)
+    @active_command = @dispatch[CONSUME_STREAM_CMD]
     @async_callback = block
   end
 
@@ -852,6 +960,11 @@ class ClientEventLoop
           @read_set.length, @read_set
         $stdout.printf "select write_set (%d fds): %p\n",
           @write_set.length,@write_set
+      end
+
+      if @read_set.empty? && @write_set.empty?
+        @running = false
+        break 
       end
 
       # XXX select can throw "closed stream (IOError)" if a write file
