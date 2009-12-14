@@ -763,7 +763,7 @@ class Client
   # Management of asynchronous operations by event loop
   #-------------------------------------------------------------------------
 
-  def fd
+  def io
     @sock
   end
 
@@ -913,7 +913,7 @@ class ClientEventLoop
 
   # A source should implement the following methods:
   #
-  #   * fd() => return IO object or nil if source has failed/finished,
+  #   * io() => return IO object or nil if source has failed/finished,
   #   * want_read() => true if the source wants to perform a read,
   #   * want_write() => true if the source wants to perform a write,
   #   * read_data() => perform nonblocking read, and
@@ -939,11 +939,11 @@ class ClientEventLoop
       @active_sources.clear
 
       @sources.each_key do |source|
-        if source.fd
+        if source.io
           if source.want_read || source.want_write
-            @read_set << source.fd if source.want_read
-            @write_set << source.fd if source.want_write
-            @active_sources[source.fd] = source
+            @read_set << source.io if source.want_read
+            @write_set << source.io if source.want_write
+            @active_sources[source.io] = source
           end
         else
           defunct_sources << source
