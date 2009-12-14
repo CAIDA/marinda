@@ -43,6 +43,10 @@ $options.clear = false
 
 opts = OptionParser.new
 
+opts.on("--[no-]mperio", TrueClass,  "use rb-mperio for the event loop") do |v|
+  $options.mperio = v
+end
+
 opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
   $options.verbose = v
 end
@@ -57,6 +61,65 @@ end
 
 #===========================================================================
 
+if $options.mperio
+  $: << "#{ENV['HOME']}/Work/mper/rb-mperio/ext"
+  $: << "#{ENV['HOME']}/Work/mper/rb-mperio/lib"
+
+  $options.mper_port = 1
+  $options.log_path = nil  # disable logging by default
+
+  require 'mperio'
+
+  class Delegate
+
+    def initialize(mperio)
+      @mperio = mperio
+      @mperio.delegate = self
+    end
+
+
+    def mperio_on_more
+      puts "more" if $options.verbose
+    end
+
+
+    def mperio_on_data(result)
+      printf "mperio_on_data: %p\n", result if $options.verbose
+    end
+
+
+    def mperio_on_error(reqnum, message)
+      $stderr.printf "mperio_on_error: reqnum=%d msg=%s\n", reqnum, message
+      @mperio.stop
+      exit 1
+    end
+
+
+    def mperio_on_send_error(reqnum, message)
+      $stderr.printf "mperio_on_send_error: reqnum=%d msg=%s\n", reqnum, message
+    end
+
+
+    def mperio_service_failure(message)
+      $stderr.printf "mperio_service_failure: %s\n", message
+      @mperio.stop
+      exit 1
+    end
+
+  end
+
+  $mperio = MperIO.new $options.mper_port, $options.log_path
+  $mperio.suspend_on_idle = true
+  delegate = Delegate.new $mperio
+
+  $loop = $mperio
+else
+  $loop = Marinda::ClientEventLoop.new
+end
+
+
+#===========================================================================
+
 Thread.abort_on_exception = true
 
 SOCKET = "/tmp/localts-test.sock"
@@ -67,7 +130,6 @@ $c2 = Marinda::VerboseClient.new($c.duplicate, "c2")
 $g = Marinda::VerboseClient.new $c.global_commons, "g"
 $g2 = Marinda::VerboseClient.new($g.duplicate, "g2")
 
-$loop = Marinda::ClientEventLoop.new
 $loop.add_source $c
 #$loop.add_source $c2
 $loop.add_source $g

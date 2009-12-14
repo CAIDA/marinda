@@ -48,6 +48,10 @@ opts.on("--[no-]async", TrueClass,  "benchmark async operations") do |v|
   $options.async = v
 end
 
+opts.on("--[no-]mperio", TrueClass,  "use rb-mperio for the event loop") do |v|
+  $options.mperio = v
+end
+
 begin
   ARGV.replace opts.parse(*ARGV)
 rescue OptionParser::ParseError
@@ -56,6 +60,61 @@ rescue OptionParser::ParseError
   exit 1
 end
 
+if $options.mperio
+  $: << "#{ENV['HOME']}/Work/mper/rb-mperio/ext"
+  $: << "#{ENV['HOME']}/Work/mper/rb-mperio/lib"
+
+  $options.mper_port = 1
+  $options.log_path = nil  # disable logging by default
+
+  require 'mperio'
+
+  class Delegate
+
+    def initialize(mperio)
+      @mperio = mperio
+      @mperio.delegate = self
+    end
+
+
+    def mperio_on_more
+      puts "more" if $options.verbose
+    end
+
+
+    def mperio_on_data(result)
+      printf "mperio_on_data: %p\n", result if $options.verbose
+    end
+
+
+    def mperio_on_error(reqnum, message)
+      $stderr.printf "mperio_on_error: reqnum=%d msg=%s\n", reqnum, message
+      @mperio.stop
+      exit 1
+    end
+
+
+    def mperio_on_send_error(reqnum, message)
+      $stderr.printf "mperio_on_send_error: reqnum=%d msg=%s\n", reqnum, message
+    end
+
+
+    def mperio_service_failure(message)
+      $stderr.printf "mperio_service_failure: %s\n", message
+      @mperio.stop
+      exit 1
+    end
+
+  end
+
+  $mperio = MperIO.new $options.mper_port, $options.log_path
+  $mperio.suspend_on_idle = true
+  delegate = Delegate.new $mperio
+
+  $loop = $mperio
+else
+  $loop = Marinda::ClientEventLoop.new
+end
 
 Thread.abort_on_exception = true
 
@@ -110,8 +169,7 @@ def bm_x_async_all(descr, ts, template, n)
   puts "\n::: benchmark async read_all/take_all #{template.inspect} of " +
     "#{n} tuples in #{descr} :::"
 
-  loop = Marinda::ClientEventLoop.new
-  loop.add_source ts
+  $loop.add_source ts
 
   puts
   puts "Clearing and populating region ..."
@@ -124,16 +182,16 @@ def bm_x_async_all(descr, ts, template, n)
   Benchmark.bm(14) do |bm|
     bm.report("read_all_async") do
       ts.read_all_async template do |tuple|; end
-      loop.start
+      $loop.start
     end
 
     bm.report("take_all_async") do
       ts.take_all_async template do |tuple|; end
-      loop.start
+      $loop.start
     end
   end
 
-  loop.remove_source ts
+  $loop.remove_source ts
 end
 
 #############################################################################
