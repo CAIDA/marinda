@@ -633,7 +633,7 @@ class Client
   end
 
 
-  def take_priv(template, &block)
+  def take_priv_async(template, &block)
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     send "Ca*", TAKE_PRIV_CMD, YAML.dump(template)
@@ -642,7 +642,7 @@ class Client
   end
 
 
-  def takep_priv(template, &block)
+  def takep_priv_async(template, &block)
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     send "Ca*", TAKEP_PRIV_CMD, YAML.dump(template)
