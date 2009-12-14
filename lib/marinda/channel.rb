@@ -130,7 +130,8 @@ class Channel
     @write_queue = List.new  # [WriteBuffer]
     @messages = []  # complete raw messages from the client read in read_data
 
-    # The code (e.g., WRITE_CMD) and state of the currently running command.
+    # The code (e.g., TAKE_CMD) and state of the currently running "slow"
+    # command (that is, a command that may block waiting for a response).
     #
     # It is a protocol error for a client to issue multiple commands without
     # waiting for responses.  The only exception is the CANCEL_CMD, which
@@ -142,10 +143,11 @@ class Channel
     # See further comments at client_message.
     #
     # This variable will be either nil or [command_code, state], where
-    # {command_code} is WRITE_CMD, etc, and {state} is any data needed
+    # {command_code} is TAKE_CMD, etc, and {state} is any data needed
     # by the active command to resume processing after some event it is
     # waiting for.
     @active_command = nil
+    @active_reqnum = nil
 
     @dispatch = []
     #@dispatch[INVALID_CMD]
@@ -218,6 +220,13 @@ class Channel
       # @active_command; this is by design since NEXT_CMD is unnecessary
       # for streaming operations.
       fail_protocol if command == NEXT_CMD && @active_command[1].request
+
+      fail_protocol unless reqnum == @active_reqnum
+    else
+      # Tolerate any bugs in Marinda::Client (or a malicious client).
+      return if command == NEXT_CMD || command == CANCEL_CMD
+
+      @active_reqnum = reqnum
     end
 
     @dispatch[command].call(reqnum, command, *arguments)
@@ -264,7 +273,7 @@ class Channel
       @space.region_cancel @private_port, state
 
     when READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
-      MONITOR_STREAM_CMD, CONSUME_STREAM_CMD, NEXT_CMD
+      MONITOR_STREAM_CMD, CONSUME_STREAM_CMD  # NEXT_CMD is not allowed
       @space.region_cancel @public_port, state.request if state.request
 
     when CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
