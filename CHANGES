@@ -1,3 +1,13 @@
+version 0.11.0, 2009-12-15
+  * new asynchronous client operations: read_async, readp_async, take_async,
+      takep_async, take_priv_async, takep_priv_async, read_all_async,
+      take_all_async, monitor_async, consume_async, monitor_stream_async,
+      consume_stream_async
+  * added ClientEventLoop class which provides a select-based nonblocking
+    event loop (rb-mperio v0.1.0 also provides a compatible event loop)
+  * marinda-ls: now supports Linux's connect_nonblock behavior (which
+    differs from FreeBSD)
+
 version 0.10.0, 2009-12-07
   * marinda-ls: now single-threaded and uses nonblocking I/O (including
     for SSL)
