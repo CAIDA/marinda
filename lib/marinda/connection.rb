@@ -192,8 +192,21 @@ class InsecureClientConnection
 
       @sock.connect_nonblock @sockaddr
 
-      fail "INTERNAL ERROR: InsecureClientConnection#connect: " +
-        "connect_nonblock didn't raise an exception"
+      # Linux (at least 2.6.22-14 x86_64) behaves differently than FreeBSD.
+      # After select indicates write readiness, a call to connect_nonblock
+      # returns success if the connection was established (unlike FreeBSD
+      # which errors out with EISCONN).  Thus we simulate the FreeBSD behavior
+      # by raising EISCONN.  On success, SO_ERROR should be either a packed
+      # string (in host byte order) of a 4-byte integer equal to zero, or
+      # #<Socket::Option: INET SOCKET ERROR Unknown error: 0 (0)> (the latter
+      # with Ruby 1.9?).
+      $log.debug "after connect_nonblock: SO_ERROR=%p",
+        @sock.getsockopt(Socket::SOL_SOCKET, Socket::SO_ERROR)
+      raise Errno::EISCONN
+
+      # dead code now; was to handle FreeBSD behavior
+      #fail "INTERNAL ERROR: InsecureClientConnection#connect: " +
+      #  "connect_nonblock didn't raise an exception"
 
     # not sure Errno::EINTR is possible
     rescue Errno::EINTR
