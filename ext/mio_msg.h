@@ -32,17 +32,18 @@
 **       strings (vs. blobs), and so the decode buffer must be
 **       MIO_MSG_MAX_RAW_VALUE_SIZE + 1 bytes long.
 */
-
-#define MIO_MSG_MAX_WORDS 64
-#define MIO_MSG_MAX_RAW_VALUE_SIZE 3072   /* max input for base64 encoding */
-#define MIO_MSG_MAX_ENCODED_VALUE_SIZE 4096  /* decodes to max of 3072 bytes */
-#define MIO_MSG_MAX_MESSAGE_SIZE 8192
+#define MIO_MSG_MAX_WORDS 1024
+#define MIO_MSG_MAX_RAW_VALUE_SIZE 24575 /* max input for base64 encoding */
+#define MIO_MSG_MAX_ENCODED_VALUE_SIZE 32768 /* decodes to max 24575 bytes */
+#define MIO_MSG_MAX_MESSAGE_SIZE 65535  /* 2^16 - 1 */
+#define MIO_MSG_MAX_NESTING 255
 
 /* Copy data out if needed for non-transient use. */
 typedef struct {
   const char* cw_name;
   keyword_code cw_code;
   keyword_type cw_type;
+  uint8_t cw_nesting;  /* nesting level of sublists; 0 == top level */
 
   union {
     uint32_t u_uint;
