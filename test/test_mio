@@ -1,0 +1,146 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## Tests message encoding/decoding with MIO.
+##
+## Run from top-level directory: $ ruby -I . test/test_mio
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2009 The Regents of the University of California.
+## 
+## This file is part of Marinda.
+## 
+## Marinda is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+## 
+## Marinda is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
+#############################################################################
+
+require 'test/unit'
+require 'ext/mioext'
+
+class TestMIO < Test::Unit::TestCase
+
+  def setup
+    @m = Marinda::MIO.new unless @m
+  end
+
+
+  def test_encode_arguments
+    assert_raises(ArgumentError) { @m.encode_tuple nil }
+    assert_raises(ArgumentError) { @m.encode_tuple 5 }
+    assert_raises(ArgumentError) { @m.encode_tuple self }
+  end
+
+
+  def test_encode_basic_values
+    assert_equal("E", @m.encode_tuple([]))
+    assert_equal("_", @m.encode_tuple([nil]))
+    assert_equal("1", @m.encode_tuple([1]))
+    assert_equal("%123.456000", @m.encode_tuple([123.456]))
+    assert_equal("$$", @m.encode_tuple([""]))
+    assert_equal("$Zm9v", @m.encode_tuple(["foo"]))
+  end
+
+
+  def test_encode_flat_array
+    assert_equal("1,2", @m.encode_tuple([1, 2]))
+    assert_equal("1,2,3", @m.encode_tuple([1, 2, 3]))
+    assert_equal("1,$Zm9v", @m.encode_tuple([1, "foo"]))
+    assert_equal("1,$Zm9v,$YmFy", @m.encode_tuple([1, "foo", "bar"]))
+    assert_equal("$Zm9v,$YmFy,$$", @m.encode_tuple(["foo", "bar", ""]))
+    assert_equal("$Zm9v,$YmFy,$$,$$", @m.encode_tuple(["foo", "bar", "", ""]))
+    assert_equal("_,2,_,3,_,_", @m.encode_tuple([nil, 2, nil, 3, nil, nil]))
+  end
+
+
+  def test_encode_nested_array_level_1
+    assert_equal("()", @m.encode_tuple([[]]))
+    assert_equal("(_)", @m.encode_tuple([[nil]]))
+    assert_equal("(42)", @m.encode_tuple([[42]]))
+    assert_equal("(1,2,3)", @m.encode_tuple([[1, 2, 3]]))
+    assert_equal("(1,$Zm9v,$YmFy)", @m.encode_tuple([[1, "foo", "bar"]]))
+
+    assert_equal("(),()", @m.encode_tuple([[], []]))
+    assert_equal("(),(),()", @m.encode_tuple([[], [], []]))
+
+    assert_equal("(1),2,3", @m.encode_tuple([[1], 2, 3]))
+    assert_equal("1,(2),3", @m.encode_tuple([1, [2], 3]))
+    assert_equal("1,2,(3)", @m.encode_tuple([1, 2, [3]]))
+
+    assert_equal("1,($Zm9v,$YmFy)", @m.encode_tuple([1, ["foo", "bar"]]))
+    assert_equal("($Zm9v,$YmFy),$$", @m.encode_tuple([["foo", "bar"], ""]))
+    assert_equal("($Zm9v,$YmFy),($$,$$)", @m.encode_tuple([["foo", "bar"], ["", ""]]))
+    assert_equal("(_,2,_),(3),_,(_)", @m.encode_tuple([[nil, 2, nil], [3], nil, [nil]]))
+  end
+
+
+  def test_encode_nested_array_level_2
+    assert_equal("(())", @m.encode_tuple([[[]]]))
+    assert_equal("((_))", @m.encode_tuple([[[nil]]]))
+    assert_equal("((42))", @m.encode_tuple([[[42]]]))
+    assert_equal("((1,2,3))", @m.encode_tuple([[[1, 2, 3]]]))
+    assert_equal("((1,$Zm9v,$YmFy))", @m.encode_tuple([[[1, "foo", "bar"]]]))
+
+    assert_equal("((),())", @m.encode_tuple([[[], []]]))
+    assert_equal("((),(),())", @m.encode_tuple([[[], [], []]]))
+
+    assert_equal("((1),2,3)", @m.encode_tuple([[[1], 2, 3]]))
+    assert_equal("(1,(2),3)", @m.encode_tuple([[1, [2], 3]]))
+    assert_equal("(1,2,(3))", @m.encode_tuple([[1, 2, [3]]]))
+
+    assert_equal("1,(($Zm9v),$YmFy)", @m.encode_tuple([1, [["foo"], "bar"]]))
+    assert_equal("1,($Zm9v,($YmFy))", @m.encode_tuple([1, ["foo", ["bar"]]]))
+    assert_equal("1,($Zm9v,(2,3,$YmFy))", @m.encode_tuple([1, ["foo", [2, 3, "bar"]]]))
+    assert_equal("(($Zm9v,$YmFy),(2,3)),($$,$$)", @m.encode_tuple([[["foo", "bar"], [2, 3]], ["", ""]]))
+  end
+
+
+  def test_encode_nested_array_level_n
+    assert_equal("((()))", @m.encode_tuple([[[[]]]]))
+    assert_equal("(((())))", @m.encode_tuple([[[[[]]]]]))
+    assert_equal("((((_))))", @m.encode_tuple([[[[[nil]]]]]))
+    assert_equal("((((42))))", @m.encode_tuple([[[[[42]]]]]))
+    assert_equal("((((1,2,3))))", @m.encode_tuple([[[[[1, 2, 3]]]]]))
+    assert_equal("((((1,$Zm9v,$YmFy))))", @m.encode_tuple([[[[[1, "foo", "bar"]]]]]))
+
+    assert_equal("(),(()),((())),(((())))", @m.encode_tuple([[], [[]], [[[]]], [[[[]]]]]))
+    assert_equal("(((()))),((())),(()),()", @m.encode_tuple([[[[[]]]], [[[]]], [[]], []]))
+
+    assert_equal("(1,2,3),((4)),(((5,6))),(((($Zm9v))))", @m.encode_tuple([[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]))
+  end
+
+
+  def test_encode_limits
+    max_str = "X" * Marinda::MIO::MAX_RAW_VALUE_SIZE
+
+    size = 0
+    big_tuple = []
+    while size < Marinda::MIO::MAX_MESSAGE_SIZE
+      big_tuple << max_str
+      size += Marinda::MIO::MAX_RAW_VALUE_SIZE
+    end
+
+    level = 0
+    deep_tuple = []
+    while level < Marinda::MIO::MAX_NESTING
+      deep_tuple = [ deep_tuple ]
+      level += 1
+    end
+
+    assert_nothing_raised(RuntimeError) { @m.encode_tuple [max_str] }
+    assert_raises(RuntimeError) { @m.encode_tuple [max_str + "!"] }
+    assert_raises(RuntimeError) { @m.encode_tuple big_tuple }
+    assert_nothing_raised(RuntimeError) { @m.encode_tuple deep_tuple }
+    assert_raises(RuntimeError) { @m.encode_tuple [deep_tuple] }
+  end
+
+end

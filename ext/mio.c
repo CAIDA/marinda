@@ -33,18 +33,18 @@
 
 #include "mio_keywords.h"
 #include "mio_msg.h"
-#include "mio_msg_reader.h"
-#include "mio_msg_writer.h"
-
+#include "mio_base64.h"
 #include "mio.h"
 
+/* XXX can use a smaller sprintf_buf to save space */
 typedef struct {
-  void *buffer;
+  /* message_buf is also used to return error messages to the user */
+  char message_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
+  char sprintf_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
 } mio_data_t;
 
+static VALUE mMarinda;
 static VALUE cMIO;
-
-static VALUE create_error_message(const char *msg_start, const char *msg_end);
 
 /*=========================================================================*/
 
@@ -54,7 +54,7 @@ mio_free(void *data)
   mio_data_t *mio_data = (mio_data_t *)data;
 
   if (mio_data) {
-
+    /* nothing to do */
   }
 }
 
@@ -77,6 +77,128 @@ mio_init(VALUE self)
 }
 
 
+/*
+** {tuple} must be a T_ARRAY (the caller should have checked this),
+** and it must not be empty (the caller should have dealt with the case
+** of an empty array).
+**
+** {level} is the nesting level, where 0 indicates the top-level array,
+** 1 indicates an array element in the top level array, etc.
+**
+** {index} should be the starting index into {data->message_buf} where
+** {tuple} should be marshalled.
+**
+** Returns the next starting index past the marshalled {tuple}.  The return
+** value is also equivalent to the length of the complete marshalled
+** message up to this point.
+**
+** In case of error (e.g., exceeding the max message size), this raises a
+** Ruby runtime exception.
+*/
+static size_t
+mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
+{
+  long tlen = RARRAY_LEN(tuple);
+  long i;
+  VALUE v;
+  int l;
+
+  for (i = 0; i < tlen; i++) {
+    /* We should always be able to add ',' here because of the extra space
+       allocated for NUL; that is, in the worst case, we'll overwrite the
+       space allocated for the trailing NUL (because {index} has to be less
+       than MIO_MSG_MAX_MESSAGE_SIZE at this point).  This may cause the
+       bounds check to fail later when we try to add the next element, so
+       be careful. */
+    if (i > 0) { data->message_buf[index++] = ','; }
+
+    l = 0;  /* bytes to copy from sprintf_buf to message_buf */
+    v = RARRAY_PTR(tuple)[i];
+    switch (TYPE(v)) {
+    case T_STRING:
+      if (RSTRING_LEN(v) == 0) {  /* special case: empty string */
+	strcpy(data->sprintf_buf, "$$");
+	l = 2;
+      }
+      else if (RSTRING_LEN(v) > MIO_MSG_MAX_RAW_VALUE_SIZE) {
+	sprintf(data->message_buf, "string value too long; length %ld > max "
+		"length %ld", RSTRING_LEN(v), (long)MIO_MSG_MAX_RAW_VALUE_SIZE);
+	rb_raise(rb_eRuntimeError, data->message_buf);
+      }
+      else {
+	*data->sprintf_buf = '$'; /* note: add 1 to l to adjust for this '$' */
+	l = (int)base64_encode((unsigned char *)RSTRING_PTR(v),
+			       RSTRING_LEN(v), data->sprintf_buf + 1) + 1;
+      }
+      break;
+
+    case T_FIXNUM:
+      l = sprintf(data->sprintf_buf, "%ld", FIX2LONG(v));
+      break;
+
+    case T_FLOAT:
+      *data->sprintf_buf = '%'; /* note: add 1 to l to adjust for this '%' */
+      /* XXX handle +/- infinity and NaN */
+      l = sprintf(data->sprintf_buf + 1, "%f", RFLOAT(v)->value) + 1;
+      break;
+
+    case T_NIL:
+      data->sprintf_buf[0] = '_';
+      data->sprintf_buf[1] = '\0';
+      l = 1;
+      break;
+
+    case T_ARRAY:
+      if (level >= MIO_MSG_MAX_NESTING) {
+	sprintf(data->message_buf, "array nesting level exceeds max %d",
+		MIO_MSG_MAX_NESTING);
+	rb_raise(rb_eRuntimeError, data->message_buf);
+      }
+      else if (index + 2 >= MIO_MSG_MAX_MESSAGE_SIZE) { /* accomodate "()" */
+	sprintf(data->message_buf, "message length exceeds max %d",
+		MIO_MSG_MAX_MESSAGE_SIZE);
+	rb_raise(rb_eRuntimeError, data->message_buf);
+      }
+      else {
+	data->message_buf[index++] = '(';
+	index = mio_encode_array(data, level + 1, index, v);
+	data->sprintf_buf[0] = ')';
+	data->sprintf_buf[1] = '\0';
+	l = 1;
+      }
+      break;
+
+    /* support T_TRUE and T_FALSE? */
+    default:
+      rb_raise(rb_eRuntimeError, "unsupported element type; must be nil, "
+	       "string, fixnum, float, or array");
+    }
+
+    if (index + l >= MIO_MSG_MAX_MESSAGE_SIZE) {
+      sprintf(data->message_buf, "message length exceeds max %d",
+	      MIO_MSG_MAX_MESSAGE_SIZE);
+      rb_raise(rb_eRuntimeError, data->message_buf);
+    }
+    else {
+      memcpy(&data->message_buf[index], data->sprintf_buf, l);
+      index += l;
+      data->message_buf[index] = '\0';
+    }
+  }
+
+  return index;
+}
+
+
+/*
+** Returns the encoded string form of the array {tuple}, which may have
+** nested arrays up to the max nesting level.  {tuple} may not be nil,
+** though it can be empty.  {tuple} may only contain nils, fixnums,
+** strings, floats, or arrays.  Note that bignums aren't allowed currently.
+**
+** In case of error (e.g., exceeding the max message size), this raises a
+** Ruby runtime exception.
+*/
 static VALUE
 mio_encode_tuple(VALUE self, VALUE tuple)
 {
@@ -84,45 +206,45 @@ mio_encode_tuple(VALUE self, VALUE tuple)
 
   Data_Get_Struct(self, mio_data_t, data);
 
-  return Qnil;
-}
+  if (NIL_P(tuple)) {
+    rb_raise(rb_eArgError, "tuple argument is nil");
+  }
+  else if (TYPE(tuple) == T_ARRAY) {
+    if (RARRAY_LEN(tuple) == 0) {
+      strcpy(data->message_buf, "E"); /* special case: empty top-level */
+    }
+    else {
+      mio_encode_array(data, 0, 0, tuple);
+    }
+    return rb_str_new2(data->message_buf);
+  }
+  else {
+    rb_raise(rb_eArgError, "tuple argument must be an array");
+  }
 
-
-static VALUE
-create_error_message(const char *msg_start, const char *msg_end)
-{
-  size_t len = strlen(msg_start) + 2 + strlen(msg_end);
-  char *buf;
-  VALUE retval;
-
-  buf = ALLOC_N(char, len + 1);
-  strcpy(buf, msg_start);
-  strcat(buf, ": ");
-  strcat(buf, msg_end);
-
-  retval = rb_str_new2(buf);
-  free(buf);
-
-  return retval;
+  return Qnil;  /*NOTREACHED*/
 }
 
 
 /***************************************************************************/
 /***************************************************************************/
 
-#define IV_INTERN(name) iv_##name = rb_intern("@" #name)
-#define METH_INTERN(name) meth_##name = rb_intern(#name)
+#define DEF_LIMIT(name) \
+  rb_define_const(cMIO, #name, ULONG2NUM(MIO_MSG_##name));
 
 void
 Init_mio(void)
 {
   ID private_class_method_ID, private_ID;
-  ID /*new_ID,*/ dup_ID, clone_ID;
+  ID dup_ID, clone_ID;
 
-  /* XXX make MIO a singleton */
-  /* XXX fix message creation/parsing routines to not use static buffers */
+  mMarinda = rb_define_module("Marinda");
+  cMIO = rb_define_class_under(mMarinda, "MIO", rb_cObject);
 
-  cMIO = rb_define_class("MIO", rb_cObject);
+  DEF_LIMIT(MAX_RAW_VALUE_SIZE);
+  DEF_LIMIT(MAX_ENCODED_VALUE_SIZE);
+  DEF_LIMIT(MAX_MESSAGE_SIZE);
+  DEF_LIMIT(MAX_NESTING);
 
   rb_define_alloc_func(cMIO, mio_alloc);
 
@@ -131,11 +253,9 @@ Init_mio(void)
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");
-  /* new_ID = rb_intern("new"); */
   dup_ID = rb_intern("dup");
   clone_ID = rb_intern("clone");
 
-  /* rb_funcall(cMIO, private_class_method_ID, 1, ID2SYM(new_ID)); */
   rb_funcall(cMIO, private_ID, 1, ID2SYM(dup_ID));
   rb_funcall(cMIO, private_ID, 1, ID2SYM(clone_ID));
 }

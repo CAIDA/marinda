@@ -31,6 +31,8 @@
 **       terminator, but we manually add a NUL terminator when decoding
 **       strings (vs. blobs), and so the decode buffer must be
 **       MIO_MSG_MAX_RAW_VALUE_SIZE + 1 bytes long.
+**
+**       MIO_MSG_MAX_ENCODED_VALUE_SIZE must be < MIO_MSG_MAX_MESSAGE_SIZE.
 */
 #define MIO_MSG_MAX_WORDS 1024
 #define MIO_MSG_MAX_RAW_VALUE_SIZE 24575 /* max input for base64 encoding */
