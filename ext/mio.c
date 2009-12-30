@@ -226,6 +226,26 @@ mio_encode_tuple(VALUE self, VALUE tuple)
 }
 
 
+/*
+** Returns an empty string of the specified length for benchmarking purposes.
+** This can be used to determine the Ruby overhead in wrapping a C function.
+*/
+static VALUE
+mio_encode_tuple_noop(VALUE self, VALUE vlength)
+{
+  mio_data_t *data = NULL;
+  long length = NUM2ULONG(vlength);
+
+  Data_Get_Struct(self, mio_data_t, data);
+
+  if (length > MIO_MSG_MAX_MESSAGE_SIZE) {
+    length = MIO_MSG_MAX_MESSAGE_SIZE;
+  }
+
+  return rb_str_new(data->message_buf, length);
+}
+
+
 /***************************************************************************/
 /***************************************************************************/
 
@@ -250,6 +270,7 @@ Init_mio(void)
 
   rb_define_method(cMIO, "initialize", mio_init, 0);
   rb_define_method(cMIO, "encode_tuple", mio_encode_tuple, 1);
+  rb_define_method(cMIO, "encode_tuple_noop", mio_encode_tuple_noop, 1);
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");
