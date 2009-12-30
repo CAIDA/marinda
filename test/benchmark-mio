@@ -33,6 +33,9 @@ require 'benchmark'
 
 require 'mioext'
 
+$0 = "benchmark-mio"
+$command_line = "#{$0} " + ARGV.join(" ")
+
 $options = OpenStruct.new
 $options.yaml = true
 $options.bert = false
@@ -67,15 +70,24 @@ if $options.bert
 end
 
 #----------------------------------------------------------------------------
+
 def bm_encode(m, n, tuple, descr)
   n *= $options.scale
-  puts "\n::: benchmark of encoding #{n} tuples (#{descr}) :::"
+  puts "\n::: encoding #{n} tuples (#{descr}) :::"
+
+  ylen = YAML.dump(tuple).length if $options.yaml
+  mlen = m.encode_tuple(tuple).length
+  blen = BERT.encode(tuple).length if $options.bert
 
   puts
-  Benchmark.bm(4) do |bm|
+  times = Benchmark.bmbm do |bm|
     if $options.yaml
       bm.report("YAML") do
         n.times do YAML.dump tuple end
+      end
+
+      bm.report("YAML-noop") do
+        n.times do m.encode_tuple_noop ylen end
       end
     end
 
@@ -83,15 +95,79 @@ def bm_encode(m, n, tuple, descr)
       n.times do m.encode_tuple tuple end
     end
 
+    bm.report("MIO-noop") do
+      n.times do m.encode_tuple_noop mlen end
+    end
+
     if $options.bert
       bm.report("BERT") do
         n.times do BERT.encode tuple end
       end
+
+      bm.report("BERT-noop") do
+        n.times do m.encode_tuple_noop blen end
+      end
     end
+  end
+
+  if $options.yaml || $options.bert
+    if $options.yaml
+      ytms = times.shift
+      nytms = times.shift
+    end
+
+    mtms = times.shift
+    nmtms = times.shift
+
+    if $options.bert
+      btms = times.shift
+      nbtms = times.shift
+    end
+
+    puts
+    ratio "YAML", ytms, "MIO", mtms if $options.yaml
+    ratio "BERT", btms, "MIO", mtms if $options.bert
+    ratio "YAML proper", ytms - nytms,
+      "MIO proper", mtms - nmtms if $options.yaml
+    ratio "BERT proper", btms - nbtms,
+      "MIO proper", mtms - nmtms if $options.bert
+  end
+
+  puts
+  printf "YAML %d bytes\n", ylen if $options.yaml
+  printf "MIO  %d bytes\n", mlen
+  printf "BERT %d bytes\n", blen if $options.bert
+
+  size_ratio "YAML", ylen, "MIO", mlen if $options.yaml
+  size_ratio "BERT", blen, "MIO", mlen if $options.bert
+end
+
+
+def ratio(b1, tms1, b2, tms2)
+  if tms1.real < 0 || tms2.real < 0
+    printf "skipping due to negative real time: %s=%f, %s=%f\n",
+      b1, tms1.real, b2, tms2.real
+    return
+  end
+
+  if tms2.real <= tms1.real
+    r = tms1.real / tms2.real
+    printf "%s is %.3fx faster than %s\n", b2, r, b1
+  else
+    ratio b2, tms2, b1, tms1
   end
 end
 
-#############################################################################
+
+def size_ratio(b1, size1, b2, size2)
+  if size1 >= size2
+    r = size1.quo(size2)
+    printf "%s is %.3fx larger than %s\n", b1, r, b2
+  else
+    size_ratio b2, size2, b1, size1
+  end
+end
+
 
 def gen_string(len)
   a = []
@@ -100,6 +176,13 @@ def gen_string(len)
   end
   a.join nil
 end
+
+#############################################################################
+## MAIN
+#############################################################################
+
+puts "# " + $command_line
+puts "# " + Time.now.to_s
 
 m = Marinda::MIO.new
 
@@ -152,7 +235,7 @@ tuples = [
           [[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]
 ]
 tuples.each do |t|
-  bm_encode m, 5000, t, "complex: " + t.inspect
+  bm_encode m, 5000, t, t.inspect
 end
 
 puts "\n\n### DONE."
