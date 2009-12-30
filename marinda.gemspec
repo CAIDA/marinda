@@ -14,6 +14,8 @@ MY_VERSION = Marinda::VERSION
 MY_EXTRA_FILES = ["README", "CHANGES", "COPYING"]
 
 candidates = Dir.glob("{bin,lib,test}/**/*")
+candidates << "ext/extconf.rb"
+candidates.concat Dir.glob("ext/*.[ch]")
 candidates.concat Dir.glob("docs/*.{html,css,rb,txt,png}")
 candidates.concat MY_EXTRA_FILES
 
@@ -37,6 +39,7 @@ Distributed tuple space
 EOF
   s.files     = MY_FILES
   s.require_path = "lib"
+  s.extensions = ["ext/extconf.rb"]
   #s.rubyforge_project = "marinda"
   #s.test_file = "test/ts_marinda.rb"
   s.has_rdoc  = false

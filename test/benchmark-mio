@@ -1,0 +1,135 @@
+#!/usr/bin/env ruby
+
+#############################################################################
+## Tests message encoding/decoding with MIO.
+##
+## --------------------------------------------------------------------------
+## Copyright (C) 2009 The Regents of the University of California.
+## 
+## This file is part of Marinda.
+## 
+## Marinda is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+## 
+## Marinda is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
+#############################################################################
+
+$: << "."
+$: << "../lib"
+$: << "../ext"
+
+require 'yaml'
+require 'ostruct'
+require 'optparse'
+require 'benchmark'
+
+require 'mioext'
+
+$options = OpenStruct.new
+
+opts = OptionParser.new
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
+#----------------------------------------------------------------------------
+def bm_encode(m, n, tuple, descr)
+  puts "\n::: benchmark of encoding #{n} tuples (#{descr}) :::"
+
+  puts
+  Benchmark.bm(4) do |bm|
+    bm.report("YAML") do
+      n.times do YAML.dump tuple end
+    end
+
+    bm.report("MIO") do
+      n.times do m.encode_tuple tuple end
+    end
+  end
+end
+
+#############################################################################
+
+def gen_string(len)
+  a = []
+  len.times do
+    a << (rand(94) + 33).chr
+  end
+  a.join nil
+end
+
+m = Marinda::MIO.new
+
+bm_encode m, 50000, [], "empty"
+
+bm_encode m, 25000, [1,2,3,4,5], "5 fixnums"
+
+bm_encode m, 25000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891], "5 floats"
+
+bm_encode m, 10000, (1..25).to_a, "25 fixnums"
+
+bm_encode m, 10000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891] * 5, "25 floats"
+
+bm_encode m, 200, (1..1000).to_a, "1000 fixnums"
+
+s = gen_string 26
+bm_encode m, 50000, [s], "1 string of 26 bytes"
+
+s = gen_string 1024
+bm_encode m, 50000, [s], "1 string of 1024 bytes"
+
+s = gen_string 20000
+bm_encode m, 10000, [s], "1 string of 20000 bytes"
+
+a = []
+10.times do a << gen_string(26) end
+bm_encode m, 10000, a, "10 strings of 26 bytes each"
+
+90.times do a << gen_string(26) end
+bm_encode m, 1000, a, "100 strings of 26 bytes each"
+
+900.times do a << gen_string(26) end
+bm_encode m, 100, a, "1000 strings of 26 bytes each"
+
+tuples = [
+          [["foo", "bar"], ""],
+          [["foo", "bar"], ["", ""]],
+          [[nil, 2, nil], [3], nil, [nil]],
+          [[[]]],
+          [[[nil]]],
+          [[[42]]],
+          [[[1, 2, 3]]],
+          [[[1, "foo", "bar"]]],
+          [[[], []]],
+          [[[], [], []]],
+          [[[1], 2, 3]],
+          [[1, [2], 3]],
+          [[1, 2, [3]]],
+          [1, [["foo"], "bar"]],
+          [1, ["foo", ["bar"]]],
+          [1, ["foo", [2, 3, "bar"]]],
+          [[["foo", "bar"], [2, 3]], ["", ""]],
+          [[[[]]]],
+          [[[[[1, "foo", "bar"]]]]],
+          [[], [[]], [[[]]], [[[[]]]]],
+          [[[[[]]]], [[[]]], [[]], []],
+          [[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]
+]
+tuples.each do |t|
+  bm_encode m, 5000, t, "complex: " + t.inspect
+end
+
+puts "\n\n### DONE."
