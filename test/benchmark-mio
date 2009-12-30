@@ -34,8 +34,24 @@ require 'benchmark'
 require 'mioext'
 
 $options = OpenStruct.new
+$options.yaml = true
+$options.bert = false
+$options.scale = 1
 
 opts = OptionParser.new
+
+opts.on("--[no-]yaml", TrueClass,  "benchmark YAML") do |v|
+  $options.yaml = v
+end
+
+opts.on("--[no-]bert", TrueClass,  "benchmark BERT") do |v|
+  $options.bert = v
+end
+
+opts.on("--scale", "=NUM", Integer,
+        "increase interations by this factor") do |v|
+  $options.scale = v
+end
 
 begin
   ARGV.replace opts.parse(*ARGV)
@@ -45,18 +61,32 @@ rescue OptionParser::ParseError
   exit 1
 end
 
+if $options.bert
+  require 'rubygems'
+  require 'bert'
+end
+
 #----------------------------------------------------------------------------
 def bm_encode(m, n, tuple, descr)
+  n *= $options.scale
   puts "\n::: benchmark of encoding #{n} tuples (#{descr}) :::"
 
   puts
   Benchmark.bm(4) do |bm|
-    bm.report("YAML") do
-      n.times do YAML.dump tuple end
+    if $options.yaml
+      bm.report("YAML") do
+        n.times do YAML.dump tuple end
+      end
     end
 
     bm.report("MIO") do
       n.times do m.encode_tuple tuple end
+    end
+
+    if $options.bert
+      bm.report("BERT") do
+        n.times do BERT.encode tuple end
+      end
     end
   end
 end
