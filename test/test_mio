@@ -42,7 +42,7 @@ class TestMIO < Test::Unit::TestCase
 
 
   def test_encode_basic_values
-    assert_equal("E", @m.encode_tuple([]))
+    assert_equal("`", @m.encode_tuple([]))
     assert_equal("_", @m.encode_tuple([nil]))
     assert_equal("1", @m.encode_tuple([1]))
     assert_equal("%123.456000", @m.encode_tuple([123.456]))
