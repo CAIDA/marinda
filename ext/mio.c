@@ -228,6 +228,12 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
 **
 ** In case of error (e.g., exceeding the max message size), this raises a
 ** Ruby runtime exception.
+**
+** Design notes:
+**
+**  * The `E, `T, and `F syntax is inspired by OCaml's polymorphic variants.
+**    You can think of them as an extensible set of keywords in the encoding
+**    syntax.
 */
 static size_t
 mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
@@ -301,13 +307,15 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       break;
 
     case T_TRUE:
-      data->value_buf[0] = 'T';
-      l = 1;
+      data->value_buf[0] = '`';
+      data->value_buf[1] = 'T';
+      l = 2;
       break;
 
     case T_FALSE:
-      data->value_buf[0] = 'F';
-      l = 1;
+      data->value_buf[0] = '`';
+      data->value_buf[1] = 'F';
+      l = 2;
       break;
 
 #ifdef HAVE_LONG_LONG
@@ -373,7 +381,7 @@ mio_encode_tuple(VALUE self, VALUE tuple)
   }
   else if (TYPE(tuple) == T_ARRAY) {
     if (RARRAY_LEN(tuple) == 0) {
-      strcpy(data->message_buf, "`"); /* special case: empty top-level */
+      strcpy(data->message_buf, "`E"); /* special case: empty top-level */
     }
     else {
       mio_encode_array(data, 0, 0, tuple);
