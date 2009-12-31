@@ -124,7 +124,6 @@ class TestMIO < Test::Unit::TestCase
     assert_equal("`E", @m.encode_tuple([]))
     assert_equal("_", @m.encode_tuple([nil]))
     assert_equal("B", @m.encode_tuple([1]))
-    assert_equal("%123.456000", @m.encode_tuple([123.456]))
     assert_equal("$$", @m.encode_tuple([""]))
     assert_equal("$Zm9v", @m.encode_tuple(["foo"]))
     assert_equal("`T", @m.encode_tuple([true]))
@@ -150,6 +149,20 @@ class TestMIO < Test::Unit::TestCase
     assert_equal("EAAAAAAAAAA", @m.encode_tuple([2**62]))
     assert_equal("H//////////", @m.encode_tuple([2**63 - 1]))  # max
     assert_equal("--", @m.encode_tuple([-2**63]))  # min
+
+    # floats (checking byte ordering as well as encoding)
+    # ".QWeMKdzW6dw=".unpack("m").first.unpack("G")
+    assert_equal(".P/AAAAAAAAA", @m.encode_tuple([1.0]))
+    assert_equal(".P/AAAAAAAAE", @m.encode_tuple([1.0000000000000002]))
+    assert_equal(".QWeMKdzW6dw", @m.encode_tuple([12345678.90123456]))
+
+    puts if $options.verbose
+    100.times do
+      x = rand()  # [0.0, 1.0)
+      s = [[x].pack("G")].pack("m").gsub!(/\=\n/, "")
+      printf "%f => %s\n", x, s if $options.verbose
+      assert_equal("." + s, @m.encode_tuple([x]))
+    end
   end
 
 

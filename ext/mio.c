@@ -212,6 +212,48 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
 
 
 /*
+** This base64 encodes the raw bytes of a float (double) for both shorter
+** representation and for greater fidelity (infinities, NaNs, etc.).
+*/
+static size_t
+mio_encode_float(mio_data_t *data, size_t index, VALUE value)
+{
+#ifdef MIO_BIG_ENDIAN
+  unsigned char *d = (unsigned char *)&RFLOAT(value)->value;
+#elif defined(MIO_LITTLE_ENDIAN)
+  unsigned char *dle = (unsigned char *)&RFLOAT(value)->value;
+  unsigned char *dlep = dle + 7;
+  unsigned char d[8], *dp = d;
+
+  while (dlep >= dle) {
+    *dp++ = *dlep--;
+  }
+#else
+#error "MIO_BIG_ENDIAN or MIO_LITTLE_ENDIAN must be defined."
+#endif
+
+  /* Space optimization:
+  **   The base64 encoding of 8 bytes produces 12 bytes, with the last
+  **   byte always being '='.  We chop off this trailing byte to save
+  **   space.
+  **
+  **   NOTE: base64_encode() always NUL-terminates the output, so we
+  **         actually still need 13 bytes available in data->message_buf,
+  **         even though we will only use 12 bytes in the end.
+  */
+  if (index + 13 < MIO_MSG_MAX_MESSAGE_SIZE) { /* see NOTE above for 13 != 12 */
+    data->message_buf[index] = '.';
+    base64_encode(d, 8, &data->message_buf[index + 1]);
+    data->message_buf[index + 12] = '\0';  /* remove trailing '=' */
+    return index + 12;
+  }
+  else {
+    fail_message_length(data);
+  }
+}
+
+
+/*
 ** {tuple} must be a T_ARRAY (the caller should have checked this),
 ** and it must not be empty (the caller should have dealt with the case
 ** of an empty array).
@@ -274,14 +316,11 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       break;
 
     case T_FIXNUM:
-      /* l = sprintf(data->value_buf, "%ld", FIX2LONG(v)); */
       index = mio_encode_fixnum(data, index, v);
       break;
 
     case T_FLOAT:
-      *data->value_buf = '%'; /* note: add 1 to l to adjust for this '%' */
-      /* XXX handle +/- infinity and NaN */
-      l = sprintf(data->value_buf + 1, "%f", RFLOAT(v)->value) + 1;
+      index = mio_encode_float(data, index, v);
       break;
 
     case T_NIL:
@@ -334,23 +373,25 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 #endif
     }
 
-    if (index + l >= MIO_MSG_MAX_MESSAGE_SIZE) {
-      fail_message_length(data);
-    }
-    else {
-      if (l > 2) {
-	memcpy(&data->message_buf[index], data->value_buf, l);
-	index += l;
+    if (l > 0) {
+      if (index + l >= MIO_MSG_MAX_MESSAGE_SIZE) {
+	fail_message_length(data);
       }
-      else if (l == 1) {
-	data->message_buf[index++] = *data->value_buf;
+      else {
+	if (l > 2) {
+	  memcpy(&data->message_buf[index], data->value_buf, l);
+	  index += l;
+	}
+	else if (l == 1) {
+	  data->message_buf[index++] = *data->value_buf;
+	}
+	else if (l == 2) {
+	  data->message_buf[index++] = data->value_buf[0];
+	  data->message_buf[index++] = data->value_buf[1];
+	}
+
+	data->message_buf[index] = '\0';
       }
-      else if (l == 2) {
-	data->message_buf[index++] = data->value_buf[0];
-	data->message_buf[index++] = data->value_buf[1];
-      }
-      /* else (l == 0): nothing to do */
-      data->message_buf[index] = '\0';
     }
   }
 
@@ -500,6 +541,64 @@ mio_benchmark_decimal_int_encoding(VALUE self, VALUE vn, VALUE viterations)
 }
 
 
+/*
+** Converts a double value to a decimal number using sprintf() for
+** benchmarking purposes.
+*/
+static VALUE
+mio_benchmark_base64_double_encoding(VALUE self, VALUE vn, VALUE viterations)
+{
+  mio_data_t *data = NULL;
+  long iterations = NUM2LONG(viterations);
+
+  Data_Get_Struct(self, mio_data_t, data);
+
+  if (NIL_P(vn)) {
+    rb_raise(rb_eArgError, "numeric value argument is nil");
+  }
+  else if (TYPE(vn) == T_FLOAT) {
+    while (iterations > 0) {
+      mio_encode_float(data, 0, vn);
+      --iterations;
+    }
+  }
+  else {
+    rb_raise(rb_eArgError, "numeric value argument must be a float");
+  }
+
+  return Qnil;
+}
+
+
+/*
+** Converts a double value to a decimal number using sprintf() for
+** benchmarking purposes.
+*/
+static VALUE
+mio_benchmark_decimal_double_encoding(VALUE self, VALUE vn, VALUE viterations)
+{
+  mio_data_t *data = NULL;
+  long iterations = NUM2LONG(viterations);
+
+  Data_Get_Struct(self, mio_data_t, data);
+
+  if (NIL_P(vn)) {
+    rb_raise(rb_eArgError, "numeric value argument is nil");
+  }
+  else if (TYPE(vn) == T_FLOAT) {
+    while (iterations > 0) {
+      sprintf(data->value_buf, "%f", RFLOAT(vn)->value);
+      --iterations;
+    }
+  }
+  else {
+    rb_raise(rb_eArgError, "numeric value argument must be a float");
+  }
+
+  return Qnil;
+}
+
+
 /***************************************************************************/
 /***************************************************************************/
 
@@ -529,6 +628,10 @@ Init_mio(void)
 		   mio_benchmark_b64_encoding, 2);
   rb_define_method(cMIO, "benchmark_decimal_int_encoding",
 		   mio_benchmark_decimal_int_encoding, 2);
+  rb_define_method(cMIO, "benchmark_base64_double_encoding",
+		   mio_benchmark_base64_double_encoding, 2);
+  rb_define_method(cMIO, "benchmark_decimal_double_encoding",
+		   mio_benchmark_decimal_double_encoding, 2);
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");

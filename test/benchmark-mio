@@ -134,6 +134,32 @@ def bm_int_conversions(m, iterations, n, descr)
 end
 
 
+def bm_double_conversions(m, iterations, n, descr)
+  n *= $options.scale
+  puts "\n::: converting #{descr} (#{iterations} times) :::"
+
+  puts
+  Benchmark.bm(7) do |bm|
+    btms = bm.report("base64") do
+      m.benchmark_base64_double_encoding n, iterations
+    end
+
+    stms = bm.report("sprintf") do
+      m.benchmark_decimal_double_encoding n, iterations
+    end
+
+    puts
+    ratio "sprintf", stms, "base64", btms
+
+    puts
+    printf "base64:  %.5f us per conversion\n",
+      (1.0e6 * btms.real).quo(iterations)
+    printf "sprintf: %.5f us per conversion\n",
+      (1.0e6 * stms.real).quo(iterations)
+  end
+end
+
+
 def bm_encode(m, n, tuple, descr)
   n *= $options.scale
   puts "\n::: encoding #{n} tuples (#{descr}) :::"
@@ -286,6 +312,12 @@ puts "# " + $command_line
 puts "# " + Time.now.to_s
 
 m = Marinda::MIO.new
+
+bm_double_conversions m, 1_000_000, 1.0, "1.0"
+bm_double_conversions m, 1_000_000, 1.23456, "1.23456"
+bm_double_conversions m, 1_000_000, 1.234567890123456, "1.234567890123456"
+bm_double_conversions m, 1_000_000, 123456.0, "123456.0"
+bm_double_conversions m, 1_000_000, 12345678.90123456, "12345678.90123456"
 
 bm_int_conversions m, 1_000_000, 1, "1"
 bm_int_conversions m, 1_000_000, 2**16, "2**16"
