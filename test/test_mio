@@ -44,7 +44,7 @@ class TestMIO < Test::Unit::TestCase
   def test_encode_basic_values
     assert_equal("`", @m.encode_tuple([]))
     assert_equal("_", @m.encode_tuple([nil]))
-    assert_equal("1", @m.encode_tuple([1]))
+    assert_equal("B", @m.encode_tuple([1]))
     assert_equal("%123.456000", @m.encode_tuple([123.456]))
     assert_equal("$$", @m.encode_tuple([""]))
     assert_equal("$Zm9v", @m.encode_tuple(["foo"]))
@@ -52,55 +52,55 @@ class TestMIO < Test::Unit::TestCase
 
 
   def test_encode_flat_array
-    assert_equal("1,2", @m.encode_tuple([1, 2]))
-    assert_equal("1,2,3", @m.encode_tuple([1, 2, 3]))
-    assert_equal("1,$Zm9v", @m.encode_tuple([1, "foo"]))
-    assert_equal("1,$Zm9v,$YmFy", @m.encode_tuple([1, "foo", "bar"]))
+    assert_equal("B,C", @m.encode_tuple([1, 2]))
+    assert_equal("B,C,D", @m.encode_tuple([1, 2, 3]))
+    assert_equal("B,$Zm9v", @m.encode_tuple([1, "foo"]))
+    assert_equal("B,$Zm9v,$YmFy", @m.encode_tuple([1, "foo", "bar"]))
     assert_equal("$Zm9v,$YmFy,$$", @m.encode_tuple(["foo", "bar", ""]))
     assert_equal("$Zm9v,$YmFy,$$,$$", @m.encode_tuple(["foo", "bar", "", ""]))
-    assert_equal("_,2,_,3,_,_", @m.encode_tuple([nil, 2, nil, 3, nil, nil]))
+    assert_equal("_,C,_,D,_,_", @m.encode_tuple([nil, 2, nil, 3, nil, nil]))
   end
 
 
   def test_encode_nested_array_level_1
     assert_equal("()", @m.encode_tuple([[]]))
     assert_equal("(_)", @m.encode_tuple([[nil]]))
-    assert_equal("(42)", @m.encode_tuple([[42]]))
-    assert_equal("(1,2,3)", @m.encode_tuple([[1, 2, 3]]))
-    assert_equal("(1,$Zm9v,$YmFy)", @m.encode_tuple([[1, "foo", "bar"]]))
+    assert_equal("(q)", @m.encode_tuple([[42]]))
+    assert_equal("(B,C,D)", @m.encode_tuple([[1, 2, 3]]))
+    assert_equal("(B,$Zm9v,$YmFy)", @m.encode_tuple([[1, "foo", "bar"]]))
 
     assert_equal("(),()", @m.encode_tuple([[], []]))
     assert_equal("(),(),()", @m.encode_tuple([[], [], []]))
 
-    assert_equal("(1),2,3", @m.encode_tuple([[1], 2, 3]))
-    assert_equal("1,(2),3", @m.encode_tuple([1, [2], 3]))
-    assert_equal("1,2,(3)", @m.encode_tuple([1, 2, [3]]))
+    assert_equal("(B),C,D", @m.encode_tuple([[1], 2, 3]))
+    assert_equal("B,(C),D", @m.encode_tuple([1, [2], 3]))
+    assert_equal("B,C,(D)", @m.encode_tuple([1, 2, [3]]))
 
-    assert_equal("1,($Zm9v,$YmFy)", @m.encode_tuple([1, ["foo", "bar"]]))
+    assert_equal("B,($Zm9v,$YmFy)", @m.encode_tuple([1, ["foo", "bar"]]))
     assert_equal("($Zm9v,$YmFy),$$", @m.encode_tuple([["foo", "bar"], ""]))
     assert_equal("($Zm9v,$YmFy),($$,$$)", @m.encode_tuple([["foo", "bar"], ["", ""]]))
-    assert_equal("(_,2,_),(3),_,(_)", @m.encode_tuple([[nil, 2, nil], [3], nil, [nil]]))
+    assert_equal("(_,C,_),(D),_,(_)", @m.encode_tuple([[nil, 2, nil], [3], nil, [nil]]))
   end
 
 
   def test_encode_nested_array_level_2
     assert_equal("(())", @m.encode_tuple([[[]]]))
     assert_equal("((_))", @m.encode_tuple([[[nil]]]))
-    assert_equal("((42))", @m.encode_tuple([[[42]]]))
-    assert_equal("((1,2,3))", @m.encode_tuple([[[1, 2, 3]]]))
-    assert_equal("((1,$Zm9v,$YmFy))", @m.encode_tuple([[[1, "foo", "bar"]]]))
+    assert_equal("((q))", @m.encode_tuple([[[42]]]))
+    assert_equal("((B,C,D))", @m.encode_tuple([[[1, 2, 3]]]))
+    assert_equal("((B,$Zm9v,$YmFy))", @m.encode_tuple([[[1, "foo", "bar"]]]))
 
     assert_equal("((),())", @m.encode_tuple([[[], []]]))
     assert_equal("((),(),())", @m.encode_tuple([[[], [], []]]))
 
-    assert_equal("((1),2,3)", @m.encode_tuple([[[1], 2, 3]]))
-    assert_equal("(1,(2),3)", @m.encode_tuple([[1, [2], 3]]))
-    assert_equal("(1,2,(3))", @m.encode_tuple([[1, 2, [3]]]))
+    assert_equal("((B),C,D)", @m.encode_tuple([[[1], 2, 3]]))
+    assert_equal("(B,(C),D)", @m.encode_tuple([[1, [2], 3]]))
+    assert_equal("(B,C,(D))", @m.encode_tuple([[1, 2, [3]]]))
 
-    assert_equal("1,(($Zm9v),$YmFy)", @m.encode_tuple([1, [["foo"], "bar"]]))
-    assert_equal("1,($Zm9v,($YmFy))", @m.encode_tuple([1, ["foo", ["bar"]]]))
-    assert_equal("1,($Zm9v,(2,3,$YmFy))", @m.encode_tuple([1, ["foo", [2, 3, "bar"]]]))
-    assert_equal("(($Zm9v,$YmFy),(2,3)),($$,$$)", @m.encode_tuple([[["foo", "bar"], [2, 3]], ["", ""]]))
+    assert_equal("B,(($Zm9v),$YmFy)", @m.encode_tuple([1, [["foo"], "bar"]]))
+    assert_equal("B,($Zm9v,($YmFy))", @m.encode_tuple([1, ["foo", ["bar"]]]))
+    assert_equal("B,($Zm9v,(C,D,$YmFy))", @m.encode_tuple([1, ["foo", [2, 3, "bar"]]]))
+    assert_equal("(($Zm9v,$YmFy),(C,D)),($$,$$)", @m.encode_tuple([[["foo", "bar"], [2, 3]], ["", ""]]))
   end
 
 
@@ -108,14 +108,14 @@ class TestMIO < Test::Unit::TestCase
     assert_equal("((()))", @m.encode_tuple([[[[]]]]))
     assert_equal("(((())))", @m.encode_tuple([[[[[]]]]]))
     assert_equal("((((_))))", @m.encode_tuple([[[[[nil]]]]]))
-    assert_equal("((((42))))", @m.encode_tuple([[[[[42]]]]]))
-    assert_equal("((((1,2,3))))", @m.encode_tuple([[[[[1, 2, 3]]]]]))
-    assert_equal("((((1,$Zm9v,$YmFy))))", @m.encode_tuple([[[[[1, "foo", "bar"]]]]]))
+    assert_equal("((((q))))", @m.encode_tuple([[[[[42]]]]]))
+    assert_equal("((((B,C,D))))", @m.encode_tuple([[[[[1, 2, 3]]]]]))
+    assert_equal("((((B,$Zm9v,$YmFy))))", @m.encode_tuple([[[[[1, "foo", "bar"]]]]]))
 
     assert_equal("(),(()),((())),(((())))", @m.encode_tuple([[], [[]], [[[]]], [[[[]]]]]))
     assert_equal("(((()))),((())),(()),()", @m.encode_tuple([[[[[]]]], [[[]]], [[]], []]))
 
-    assert_equal("(1,2,3),((4)),(((5,6))),(((($Zm9v))))", @m.encode_tuple([[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]))
+    assert_equal("(B,C,D),((E)),(((F,G))),(((($Zm9v))))", @m.encode_tuple([[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]))
   end
 
 

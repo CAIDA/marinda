@@ -113,9 +113,9 @@ mio_init(VALUE self)
 static size_t
 mio_encode_fixnum(mio_data_t *data, size_t index, VALUE value)
 {
-  long n = FIX2LONG(value);
+  long n = FIX2LONG(value);  /* never overflows */
   char *s = data->value_buf;
-  char *d = data->message_buf;
+  char *d = &data->message_buf[index];
   int sign;
 
   if (n >= 0) {
@@ -166,7 +166,7 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
 {
   long long n = NUM2LL(value);  /* raises RangeError on overflow */
   char *s = data->value_buf;
-  char *d = data->message_buf;
+  char *d = &data->message_buf[index];
   int sign;
 
   if (n >= 0) {
@@ -175,9 +175,9 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
   else {
     sign = -1;
     if (n == LLONG_MIN) { /* special case: can't take absolute value of MIN */
-      if (index + 3 < MIO_MSG_MAX_MESSAGE_SIZE) {
+      if (index + 2 < MIO_MSG_MAX_MESSAGE_SIZE) {
 	strcpy(&data->message_buf[index], "--");
-	return index + 3;
+	return index + 2;
       }
       else {
 	fail_message_length(data);
