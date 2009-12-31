@@ -124,6 +124,12 @@ def bm_int_conversions(m, iterations, n, descr)
 
     puts
     ratio "sprintf", stms, "b64", btms
+
+    puts
+    printf "b64:     %.5f us per conversion\n",
+      (1.0e6 * btms.real).quo(iterations)
+    printf "sprintf: %.5f us per conversion\n",
+      (1.0e6 * stms.real).quo(iterations)
   end
 end
 
