@@ -24,10 +24,63 @@
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
 #############################################################################
 
+require 'ostruct'
+require 'optparse'
+
 require 'test/unit'
 require 'ext/mioext'
 
+$options = OpenStruct.new
+opts = OptionParser.new
+
+opts.on("--[no-]verbose", TrueClass, "enable verbosity") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
+
+#============================================================================
+
 class TestMIO < Test::Unit::TestCase
+
+  B64_DECODE_TBL = {}  # character code => numeric value; e.g., 'A' => 0
+
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".
+    unpack("C*").each_with_index do |c, i|
+    B64_DECODE_TBL[c] = i
+  end
+
+
+  def check_b64_encoding(s, expected)
+    assert_not_nil(s, "b64 encoded string must not be nil")
+    if s == "--"
+      assert_equal(-9223372036854775808, n)
+    else
+      assert_match(/^(-)?[A-Za-z0-9\+\/]+$/, s)
+      sign = (s[0, 1] == "-" ? -1 : 1)
+
+      n = 0
+      s.unpack("C*").each do |c|
+        next if c == 45  # '-'
+        n <<= 6
+        n |= B64_DECODE_TBL[c]
+        puts ">> " + n.to_s if $options.verbose
+      end
+
+      n = -n if sign < 0
+      assert_equal(expected, n)
+    end
+  end
+
+
+  # ------------------------------------------------------------------------
 
   def setup
     @m = Marinda::MIO.new unless @m
@@ -41,6 +94,32 @@ class TestMIO < Test::Unit::TestCase
   end
 
 
+  def test_encode_validator
+    check_b64_encoding("B", 1)
+    check_b64_encoding("a", 26)
+    check_b64_encoding("1", 53)
+
+    check_b64_encoding("EA", 2**8)
+    check_b64_encoding("QAA", 2**16)
+    check_b64_encoding("BAAAA", 2**24)
+    check_b64_encoding("-EA", -2**8)
+    check_b64_encoding("-QAA", -2**16)
+    check_b64_encoding("-BAAAA", -2**24)
+    check_b64_encoding("/////", 2**30-1)  # max
+    check_b64_encoding("-BAAAAA", -2**30)  # min
+
+    # 64-bit fixnum or bignum
+    check_b64_encoding("EAAAAA", 2**32)
+    check_b64_encoding("-EAAAAA", -2**32)
+    check_b64_encoding("D//////////", 2**62 - 1)
+    check_b64_encoding("-EAAAAAAAAAA", -2**62)
+
+    # bignum
+    check_b64_encoding("EAAAAAAAAAA", 2**62)
+    check_b64_encoding("H//////////", 2**63 - 1)  # max
+  end
+
+
   def test_encode_basic_values
     assert_equal("`", @m.encode_tuple([]))
     assert_equal("_", @m.encode_tuple([nil]))
@@ -48,6 +127,47 @@ class TestMIO < Test::Unit::TestCase
     assert_equal("%123.456000", @m.encode_tuple([123.456]))
     assert_equal("$$", @m.encode_tuple([""]))
     assert_equal("$Zm9v", @m.encode_tuple(["foo"]))
+
+    # 32-bit fixnum
+    assert_equal("EA", @m.encode_tuple([2**8]))
+    assert_equal("QAA", @m.encode_tuple([2**16]))
+    assert_equal("BAAAA", @m.encode_tuple([2**24]))
+    assert_equal("-EA", @m.encode_tuple([-2**8]))
+    assert_equal("-QAA", @m.encode_tuple([-2**16]))
+    assert_equal("-BAAAA", @m.encode_tuple([-2**24]))
+    assert_equal("/////", @m.encode_tuple([2**30-1]))  # max
+    assert_equal("-BAAAAA", @m.encode_tuple([-2**30]))  # min
+
+    # 64-bit fixnum or bignum
+    assert_equal("EAAAAA", @m.encode_tuple([2**32]))
+    assert_equal("-EAAAAA", @m.encode_tuple([-2**32]))
+    assert_equal("D//////////", @m.encode_tuple([2**62 - 1]))
+    assert_equal("-EAAAAAAAAAA", @m.encode_tuple([-2**62]))
+
+    # bignum
+    assert_equal("EAAAAAAAAAA", @m.encode_tuple([2**62]))
+    assert_equal("H//////////", @m.encode_tuple([2**63 - 1]))  # max
+    assert_equal("--", @m.encode_tuple([-2**63]))  # min
+  end
+
+
+  def test_random_b64_encoding
+    # rand(2**32) - 2**31 => (2**32 - 1) - 2**31   (max)
+    #                     => (2**31)(2 - 1) - 1    (max)
+
+    1000.times do
+      n = rand(2**32) - 2**31  # => [-2**31, 2**31-1]
+      s = @m.encode_tuple [n]
+      printf "\n%d => %s\n", n, s if $options.verbose
+      check_b64_encoding s, n
+    end
+
+    1000.times do
+      n = rand(2**64) - 2**63  # => [-2**63, 2**63-1]
+      s = @m.encode_tuple [n]
+      printf "\n%d => %s\n", n, s if $options.verbose
+      check_b64_encoding s, n
+    end
   end
 
 
