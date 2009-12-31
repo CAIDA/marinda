@@ -330,15 +330,21 @@ bm_int_conversions m, 1_000_000, -2**63, "min 64-bit bignum or fixnum"
 
 bm_encode m, 50000, [], "empty"
 
-bm_encode m, 25000, [1,2,3,4,5], "5 fixnums"
+bm_encode m, 25000, [1,2,3,4,5], "5 small fixnums"
+
+bm_encode m, 25000, [2**30-1,2**30-2,2**30-3,2**30-4,2**30-5], "5 large fixnums"
 
 bm_encode m, 25000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891], "5 floats"
 
-bm_encode m, 10000, (1..25).to_a, "25 fixnums"
+bm_encode m, 10000, (1..25).to_a, "25 small fixnums"
+
+bm_encode m, 10000, (1..25).to_a.map{|n| 2**30-n}, "25 large fixnums"
 
 bm_encode m, 10000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891] * 5, "25 floats"
 
-bm_encode m, 200, (1..1000).to_a, "1000 fixnums"
+bm_encode m, 200, (1..1000).to_a, "1000 small fixnums"
+
+bm_encode m, 200, (1..1000).to_a.map{|n| 2**30-n}, "1000 large fixnums"
 
 s = gen_string 26
 bm_encode m, 50000, [s], "1 string of 26 bytes"
@@ -363,6 +369,7 @@ tuples = [
           [["foo", "bar"], ""],
           [["foo", "bar"], ["", ""]],
           [[nil, 2, nil], [3], nil, [nil]],
+          [[nil, 2**30-2, nil], [2**30-3], nil, [nil]],
           [[[]]],
           [[[nil]]],
           [[[42]]],
@@ -374,7 +381,8 @@ tuples = [
           [[["foo", "bar"], [2, 3]], ["", ""]],
           [[[[[1, "foo", "bar"]]]]],
           [[], [[]], [[[]]], [[[[]]]]],
-          [[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]
+          [[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]],
+          [[2**30-1, 2**30-2, 2**30-3], [[2**30-4]], [[[2**30-5, 2**30-6]]], [[[["foo"]]]]]
 ]
 tuples.each do |t|
   bm_encode m, 5000, t, t.inspect
