@@ -26,7 +26,7 @@ require 'mkmf'
 have_header("stdint.h")
 have_header("unistd.h")
 
-if [0x01020304].pack("N").unpack("l") == 0x01020304
+if [0x01020304].pack("N").unpack("l").first == 0x01020304
   $CFLAGS += " -DMIO_BIG_ENDIAN"
 else
   $CFLAGS += " -DMIO_LITTLE_ENDIAN"
