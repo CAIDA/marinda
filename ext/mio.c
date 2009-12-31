@@ -416,6 +416,90 @@ mio_encode_tuple_noop(VALUE self, VALUE vlength)
 }
 
 
+/*
+** Converts an integer value to a base-64 number (NOT base-64 encoding)
+** for benchmarking purposes.
+*/
+static VALUE
+mio_benchmark_b64_encoding(VALUE self, VALUE vn, VALUE viterations)
+{
+  mio_data_t *data = NULL;
+  long iterations = NUM2LONG(viterations);
+
+  Data_Get_Struct(self, mio_data_t, data);
+
+  if (NIL_P(vn)) {
+    rb_raise(rb_eArgError, "numeric value argument is nil");
+  }
+  else if (TYPE(vn) == T_FIXNUM) {
+    while (iterations > 0) {
+      mio_encode_fixnum(data, 0, vn);
+      --iterations;
+    }
+  }
+#ifdef HAVE_LONG_LONG
+  else if (TYPE(vn) == T_BIGNUM) {
+    while (iterations > 0) {
+      mio_encode_bignum(data, 0, vn);
+      --iterations;
+    }
+  }
+  else {
+    rb_raise(rb_eArgError,
+	     "numeric value argument must be either a fixnum or a bignum");
+  }
+#else
+  else {
+    rb_raise(rb_eArgError, "numeric value argument must be a fixnum");
+  }
+#endif
+
+  return Qnil;
+}
+
+
+/*
+** Converts an integer value to a decimal number using sprintf() for
+** benchmarking purposes.
+*/
+static VALUE
+mio_benchmark_decimal_int_encoding(VALUE self, VALUE vn, VALUE viterations)
+{
+  mio_data_t *data = NULL;
+  long iterations = NUM2LONG(viterations);
+
+  Data_Get_Struct(self, mio_data_t, data);
+
+  if (NIL_P(vn)) {
+    rb_raise(rb_eArgError, "numeric value argument is nil");
+  }
+  else if (TYPE(vn) == T_FIXNUM) {
+    while (iterations > 0) {
+      sprintf(data->value_buf, "%ld", FIX2LONG(vn));
+      --iterations;
+    }
+  }
+#ifdef HAVE_LONG_LONG
+  else if (TYPE(vn) == T_BIGNUM) {
+    while (iterations > 0) {
+      sprintf(data->value_buf, "%lld", NUM2LL(vn));
+      --iterations;
+    }
+  }
+  else {
+    rb_raise(rb_eArgError,
+	     "numeric value argument must be either a fixnum or a bignum");
+  }
+#else
+  else {
+    rb_raise(rb_eArgError, "numeric value argument must be a fixnum");
+  }
+#endif
+
+  return Qnil;
+}
+
+
 /***************************************************************************/
 /***************************************************************************/
 
@@ -441,6 +525,10 @@ Init_mio(void)
   rb_define_method(cMIO, "initialize", mio_init, 0);
   rb_define_method(cMIO, "encode_tuple", mio_encode_tuple, 1);
   rb_define_method(cMIO, "encode_tuple_noop", mio_encode_tuple_noop, 1);
+  rb_define_method(cMIO, "benchmark_b64_encoding",
+		   mio_benchmark_b64_encoding, 2);
+  rb_define_method(cMIO, "benchmark_decimal_int_encoding",
+		   mio_benchmark_decimal_int_encoding, 2);
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");

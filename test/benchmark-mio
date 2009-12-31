@@ -71,6 +71,135 @@ end
 
 #----------------------------------------------------------------------------
 
+def ratio(b1, tms1, b2, tms2)
+  if tms1.real < 0 || tms2.real < 0
+    printf "skipping due to negative real time: %s=%f, %s=%f\n",
+      b1, tms1.real, b2, tms2.real
+    return
+  end
+
+  if tms2.real <= tms1.real
+    r = tms1.real / tms2.real
+    printf "%s is %.3fx faster than %s\n", b2, r, b1
+  else
+    ratio b2, tms2, b1, tms1
+  end
+end
+
+
+def size_ratio(b1, size1, b2, size2)
+  if size1 >= size2
+    r = size1.quo(size2)
+    printf "%s is %.3fx larger than %s\n", b1, r, b2
+  else
+    size_ratio b2, size2, b1, size1
+  end
+end
+
+
+def gen_string(len)
+  a = []
+  len.times do
+    a << (rand(94) + 33).chr
+  end
+  a.join nil
+end
+
+
+#----------------------------------------------------------------------------
+
+def bm_int_conversions(m, iterations, n, descr)
+  n *= $options.scale
+  puts "\n::: converting #{descr} (#{iterations} times) :::"
+
+  puts
+  Benchmark.bm(7) do |bm|
+    btms = bm.report("b64") do
+      m.benchmark_b64_encoding n, iterations
+    end
+
+    stms = bm.report("sprintf") do
+      m.benchmark_decimal_int_encoding n, iterations
+    end
+
+    puts
+    ratio "sprintf", stms, "b64", btms
+  end
+end
+
+
+def bm_encode(m, n, tuple, descr)
+  n *= $options.scale
+  puts "\n::: encoding #{n} tuples (#{descr}) :::"
+
+  ylen = YAML.dump(tuple).length if $options.yaml
+  mlen = m.encode_tuple(tuple).length
+  blen = BERT.encode(tuple).length if $options.bert
+
+  puts
+  times = Benchmark.bmbm do |bm|
+    if $options.yaml
+      bm.report("YAML") do
+        n.times do YAML.dump tuple end
+      end
+
+      bm.report("YAML-noop") do
+        n.times do m.encode_tuple_noop ylen end
+      end
+    end
+
+    bm.report("MIO") do
+      n.times do m.encode_tuple tuple end
+    end
+
+    bm.report("MIO-noop") do
+      n.times do m.encode_tuple_noop mlen end
+    end
+
+    if $options.bert
+      bm.report("BERT") do
+        n.times do BERT.encode tuple end
+      end
+
+      bm.report("BERT-noop") do
+        n.times do m.encode_tuple_noop blen end
+      end
+    end
+  end
+
+  if $options.yaml || $options.bert
+    if $options.yaml
+      ytms = times.shift
+      nytms = times.shift
+    end
+
+    mtms = times.shift
+    nmtms = times.shift
+
+    if $options.bert
+      btms = times.shift
+      nbtms = times.shift
+    end
+
+    puts
+    ratio "YAML", ytms, "MIO", mtms if $options.yaml
+    ratio "BERT", btms, "MIO", mtms if $options.bert
+    ratio "YAML proper", ytms - nytms,
+      "MIO proper", mtms - nmtms if $options.yaml
+    ratio "BERT proper", btms - nbtms,
+      "MIO proper", mtms - nmtms if $options.bert
+  end
+
+  puts
+  printf "YAML %d bytes\n", ylen if $options.yaml
+  printf "MIO  %d bytes\n", mlen
+  printf "BERT %d bytes\n", blen if $options.bert
+
+  size_ratio "YAML", ylen, "MIO", mlen if $options.yaml
+  size_ratio "BERT", blen, "MIO", mlen if $options.bert
+end
+#----------------------------------------------------------------------------
+
 def bm_encode(m, n, tuple, descr)
   n *= $options.scale
   puts "\n::: encoding #{n} tuples (#{descr}) :::"
@@ -143,40 +272,6 @@ def bm_encode(m, n, tuple, descr)
 end
 
 
-def ratio(b1, tms1, b2, tms2)
-  if tms1.real < 0 || tms2.real < 0
-    printf "skipping due to negative real time: %s=%f, %s=%f\n",
-      b1, tms1.real, b2, tms2.real
-    return
-  end
-
-  if tms2.real <= tms1.real
-    r = tms1.real / tms2.real
-    printf "%s is %.3fx faster than %s\n", b2, r, b1
-  else
-    ratio b2, tms2, b1, tms1
-  end
-end
-
-
-def size_ratio(b1, size1, b2, size2)
-  if size1 >= size2
-    r = size1.quo(size2)
-    printf "%s is %.3fx larger than %s\n", b1, r, b2
-  else
-    size_ratio b2, size2, b1, size1
-  end
-end
-
-
-def gen_string(len)
-  a = []
-  len.times do
-    a << (rand(94) + 33).chr
-  end
-  a.join nil
-end
-
 #############################################################################
 ## MAIN
 #############################################################################
@@ -185,6 +280,15 @@ puts "# " + $command_line
 puts "# " + Time.now.to_s
 
 m = Marinda::MIO.new
+
+bm_int_conversions m, 1_000_000, 1, "1"
+bm_int_conversions m, 1_000_000, 2**16, "2**16"
+bm_int_conversions m, 1_000_000, 2**24, "2**24"
+bm_int_conversions m, 1_000_000, 2**30-1, "max 32-bit fixnum"
+bm_int_conversions m, 1_000_000, -2**30, "min 32-bit fixnum"
+bm_int_conversions m, 1_000_000, 2**30, "first bignum or 64-bit fixnum"
+bm_int_conversions m, 1_000_000, 2**63-1, "max 64-bit bignum or fixnum"
+bm_int_conversions m, 1_000_000, -2**63, "min 64-bit bignum or fixnum"
 
 bm_encode m, 50000, [], "empty"
 
