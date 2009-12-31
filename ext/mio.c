@@ -3,6 +3,7 @@
 **
 ** --------------------------------------------------------------------------
 ** Author: Young Hyun
+** Copyright (C) 2009 Young Hyun
 ** Copyright (C) 2008, 2009 The Regents of the University of California.
 **
 ** This program is free software; you can redistribute it and/or modify
@@ -36,11 +37,11 @@
 #include "mio_base64.h"
 #include "mio.h"
 
-/* XXX can use a smaller sprintf_buf to save space */
+/* XXX can use a smaller value_buf to save space */
 typedef struct {
   /* message_buf is also used to return error messages to the user */
   char message_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
-  char sprintf_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
+  char value_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
 } mio_data_t;
 
 static VALUE mMarinda;
@@ -112,12 +113,12 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
        be careful. */
     if (i > 0) { data->message_buf[index++] = ','; }
 
-    l = 0;  /* bytes to copy from sprintf_buf to message_buf */
+    l = 0;  /* bytes to copy from value_buf to message_buf */
     v = RARRAY_PTR(tuple)[i];
     switch (TYPE(v)) {
     case T_STRING:
       if (RSTRING_LEN(v) == 0) {  /* special case: empty string */
-	strcpy(data->sprintf_buf, "$$");
+	strcpy(data->value_buf, "$$");
 	l = 2;
       }
       else if (RSTRING_LEN(v) > MIO_MSG_MAX_RAW_VALUE_SIZE) {
@@ -126,25 +127,25 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 	rb_raise(rb_eRuntimeError, data->message_buf);
       }
       else {
-	*data->sprintf_buf = '$'; /* note: add 1 to l to adjust for this '$' */
+	*data->value_buf = '$'; /* note: add 1 to l to adjust for this '$' */
 	l = (int)base64_encode((unsigned char *)RSTRING_PTR(v),
-			       RSTRING_LEN(v), data->sprintf_buf + 1) + 1;
+			       RSTRING_LEN(v), data->value_buf + 1) + 1;
       }
       break;
 
     case T_FIXNUM:
-      l = sprintf(data->sprintf_buf, "%ld", FIX2LONG(v));
+      l = sprintf(data->value_buf, "%ld", FIX2LONG(v));
       break;
 
     case T_FLOAT:
-      *data->sprintf_buf = '%'; /* note: add 1 to l to adjust for this '%' */
+      *data->value_buf = '%'; /* note: add 1 to l to adjust for this '%' */
       /* XXX handle +/- infinity and NaN */
-      l = sprintf(data->sprintf_buf + 1, "%f", RFLOAT(v)->value) + 1;
+      l = sprintf(data->value_buf + 1, "%f", RFLOAT(v)->value) + 1;
       break;
 
     case T_NIL:
-      data->sprintf_buf[0] = '_';
-      data->sprintf_buf[1] = '\0';
+      data->value_buf[0] = '_';
+      data->value_buf[1] = '\0';
       l = 1;
       break;
 
@@ -162,8 +163,8 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       else {
 	data->message_buf[index++] = '(';
 	index = mio_encode_array(data, level + 1, index, v);
-	data->sprintf_buf[0] = ')';
-	data->sprintf_buf[1] = '\0';
+	data->value_buf[0] = ')';
+	data->value_buf[1] = '\0';
 	l = 1;
       }
       break;
@@ -180,7 +181,7 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       rb_raise(rb_eRuntimeError, data->message_buf);
     }
     else {
-      memcpy(&data->message_buf[index], data->sprintf_buf, l);
+      memcpy(&data->message_buf[index], data->value_buf, l);
       index += l;
       data->message_buf[index] = '\0';
     }
