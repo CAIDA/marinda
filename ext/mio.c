@@ -123,7 +123,7 @@ mio_encode_fixnum(mio_data_t *data, size_t index, VALUE value)
   }
   else {
     sign = -1;
-    n = -n;  /* always safe with fixnums since they're limited precision */
+    n = -n;  /* always safe with fixnums since they don't use all bits */
   }
 
   for (;;) {
@@ -135,7 +135,7 @@ mio_encode_fixnum(mio_data_t *data, size_t index, VALUE value)
     }
   }
 
-  if (s - data->value_buf + index < MIO_MSG_MAX_MESSAGE_SIZE) {
+  if (s - data->value_buf + index <= MIO_MSG_MAX_MESSAGE_SIZE) {
     while (s > data->value_buf) {
       *d++ = *--s;
     }
@@ -175,7 +175,7 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
   else {
     sign = -1;
     if (n == LLONG_MIN) { /* special case: can't take absolute value of MIN */
-      if (index + 2 < MIO_MSG_MAX_MESSAGE_SIZE) {
+      if (index + 2 <= MIO_MSG_MAX_MESSAGE_SIZE) {
 	strcpy(&data->message_buf[index], "--");
 	return index + 2;
       }
@@ -197,7 +197,7 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
     }
   }
 
-  if (s - data->value_buf + index < MIO_MSG_MAX_MESSAGE_SIZE) {
+  if (s - data->value_buf + index <= MIO_MSG_MAX_MESSAGE_SIZE) {
     while (s > data->value_buf) {
       *d++ = *--s;
     }
@@ -237,11 +237,20 @@ mio_encode_float(mio_data_t *data, size_t index, VALUE value)
   **   byte always being '='.  We chop off this trailing byte to save
   **   space.
   **
-  **   NOTE: base64_encode() always NUL-terminates the output, so we
-  **         actually still need 13 bytes available in data->message_buf,
-  **         even though we will only use 12 bytes in the end.
+  **   NOTE: Although we shorten the representation by dropping the
+  **         trailing '=', we lengthen it by adding a leading '.', so
+  **         we're back to using 12 bytes.
+  **
+  **         Also, base64_encode() always NUL-terminates the output, so we
+  **         actually still need 13 bytes (11 bytes + '=' + NUL) available
+  **         in data->message_buf during the encoding process, even though
+  **         only 12 bytes are used ultimately.  Because of this, the user
+  **         can't utilize the full message size in this one special case,
+  **         which seems like a good tradeoff for the efficiency gained by
+  **         directly encoding into message_buf rather than first into
+  **         value_buf and then copying the result to message_buf.
   */
-  if (index + 13 < MIO_MSG_MAX_MESSAGE_SIZE) { /* see NOTE above for 13 != 12 */
+  if (index + 13 <= MIO_MSG_MAX_MESSAGE_SIZE) {/* see NOTE above for 13 != 12 */
     data->message_buf[index] = '.';
     base64_encode(d, 8, &data->message_buf[index + 1]);
     data->message_buf[index + 12] = '\0';  /* remove trailing '=' */
@@ -334,14 +343,14 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 		MIO_MSG_MAX_NESTING);
 	rb_raise(rb_eRuntimeError, data->message_buf);
       }
-      else if (index + 2 >= MIO_MSG_MAX_MESSAGE_SIZE) { /* accomodate "()" */
-	fail_message_length(data);
-      }
-      else {
+      else if (index + 2 <= MIO_MSG_MAX_MESSAGE_SIZE) { /* "()" at minimum */
 	data->message_buf[index++] = '(';
 	index = mio_encode_array(data, level + 1, index, v);
 	data->value_buf[0] = ')';
 	l = 1;
+      }
+      else {
+	fail_message_length(data);
       }
       break;
 
@@ -374,10 +383,7 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
     }
 
     if (l > 0) {
-      if (index + l >= MIO_MSG_MAX_MESSAGE_SIZE) {
-	fail_message_length(data);
-      }
-      else {
+      if (index + l <= MIO_MSG_MAX_MESSAGE_SIZE) {
 	if (l > 2) {
 	  memcpy(&data->message_buf[index], data->value_buf, l);
 	  index += l;
@@ -392,6 +398,9 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 
 	data->message_buf[index] = '\0';
       }
+      else {
+	fail_message_length(data);
+      }
     }
   }
 
@@ -401,11 +410,12 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 
 /*
 ** Returns the encoded string form of the array {tuple}, which may have
-** nested arrays up to the max nesting level.  {tuple} may not be nil,
-** though it can be empty.  {tuple} may only contain nils, fixnums,
-** strings, floats, or arrays.  Bignums are supported only if the host
-** has the 'long long' type, and only for bignums that can fit within
-** 'long long'.
+** nested arrays up to the max nesting level.
+**
+** {tuple} may not be nil, though it can be empty.  {tuple} may only
+** contain nils, fixnums, strings, floats, or arrays.  Bignums are
+** supported only if the host has the 'long long' type, and only for
+** bignums that can fit within 'long long'.
 **
 ** In case of error (e.g., exceeding the max message size), this raises a
 ** Ruby runtime exception.
