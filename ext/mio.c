@@ -1,9 +1,36 @@
 /*
 ** Ruby bindings to the Marinda messaging routines.
 **
+** Lexical syntax:
+**
+**   <empty> ::= "`E"  # empty top-level tuple
+**   <nil> ::= "_"     # nil value
+**   <true> ::= "`T"
+**   <false> ::= "`F"
+**
+**   <base64-char> ::= [A-Za-z0-9+/=]
+**
+**   <b64-int> ::= <base64-char>+
+**               | "-" <base64-char>+
+**               | "--"   # long long min: -2**63
+**
+**   <float> ::= "." <base64-char>{11}  # no trailing "="
+**      
+**   <string> ::= "$" <base64-char>+
+**              | "$$"  # empty string
+**
+** Syntax:
+**
+**   <top-level> ::= <empty> | <tuple>
+**
+**   <tuple> ::= <tuple-element> ("," <tuple-element>)*
+**
+**   <tuple-element> ::= <nil> | <true> | <false> | <b64-int> | <float>
+**                     | <string> | "()" | "(" <tuple> ")"
+**
 ** --------------------------------------------------------------------------
 ** Author: Young Hyun
-** Copyright (C) 2009 Young Hyun
+** Copyright (C) 2009, 2010 Young Hyun
 ** Copyright (C) 2008, 2009 The Regents of the University of California.
 **
 ** This program is free software; you can redistribute it and/or modify
@@ -88,6 +115,10 @@ mio_init(VALUE self)
   return self;
 }
 
+
+/*=========================================================================*/
+/* ENCODING                                                                */
+/*=========================================================================*/
 
 /*
 ** This represents a fixnum with a base-64 number (NOT base-64 encoding)
@@ -607,6 +638,12 @@ mio_benchmark_decimal_double_encoding(VALUE self, VALUE vn, VALUE viterations)
 
   return Qnil;
 }
+
+
+/*=========================================================================*/
+/* DECODING                                                                */
+/*=========================================================================*/
+
 
 
 /***************************************************************************/
