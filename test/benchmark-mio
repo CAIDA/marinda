@@ -108,54 +108,50 @@ end
 
 #----------------------------------------------------------------------------
 
-def bm_int_conversions(m, iterations, n, descr)
+def bm_int_conversions(m, n, value, descr)
   n *= $options.scale
-  puts "\n::: converting #{descr} (#{iterations} times) :::"
+  puts "\n::: converting #{descr} (#{n} times) :::"
 
   puts
   Benchmark.bm(7) do |bm|
     btms = bm.report("b64") do
-      m.benchmark_b64_encoding n, iterations
+      m.benchmark_b64_encoding value, n
     end
 
     stms = bm.report("sprintf") do
-      m.benchmark_decimal_int_encoding n, iterations
+      m.benchmark_decimal_int_encoding value, n
     end
 
     puts
     ratio "sprintf", stms, "b64", btms
 
     puts
-    printf "b64:     %.5f us per conversion\n",
-      (1.0e6 * btms.real).quo(iterations)
-    printf "sprintf: %.5f us per conversion\n",
-      (1.0e6 * stms.real).quo(iterations)
+    printf "b64:     %.5f us per conversion\n", (1.0e6 * btms.real).quo(n)
+    printf "sprintf: %.5f us per conversion\n", (1.0e6 * stms.real).quo(n)
   end
 end
 
 
-def bm_double_conversions(m, iterations, n, descr)
+def bm_double_conversions(m, n, value, descr)
   n *= $options.scale
-  puts "\n::: converting #{descr} (#{iterations} times) :::"
+  puts "\n::: converting #{descr} (#{n} times) :::"
 
   puts
   Benchmark.bm(7) do |bm|
     btms = bm.report("base64") do
-      m.benchmark_base64_double_encoding n, iterations
+      m.benchmark_base64_double_encoding value, n
     end
 
     stms = bm.report("sprintf") do
-      m.benchmark_decimal_double_encoding n, iterations
+      m.benchmark_decimal_double_encoding value, n
     end
 
     puts
     ratio "sprintf", stms, "base64", btms
 
     puts
-    printf "base64:  %.5f us per conversion\n",
-      (1.0e6 * btms.real).quo(iterations)
-    printf "sprintf: %.5f us per conversion\n",
-      (1.0e6 * stms.real).quo(iterations)
+    printf "base64:  %.5f us per conversion\n", (1.0e6 * btms.real).quo(n)
+    printf "sprintf: %.5f us per conversion\n", (1.0e6 * stms.real).quo(n)
   end
 end
 
