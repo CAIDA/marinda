@@ -47,7 +47,7 @@ typedef struct {
 static const char base64_encode_tbl[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static VALUE mMarinda;
-static VALUE cMIO;
+static VALUE cMIO, eLimitExceeded;
 
 /*=========================================================================*/
 
@@ -56,7 +56,7 @@ fail_message_length(mio_data_t *data)
 {
   sprintf(data->message_buf, "message length exceeds max %d",
 	  MIO_MSG_MAX_MESSAGE_SIZE);
-  rb_raise(rb_eRuntimeError, data->message_buf);
+  rb_raise(eLimitExceeded, data->message_buf);
 }
 
 
@@ -315,7 +315,7 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       else if (RSTRING_LEN(v) > MIO_MSG_MAX_RAW_VALUE_SIZE) {
 	sprintf(data->message_buf, "string value too long; length %ld > max "
 		"length %ld", RSTRING_LEN(v), (long)MIO_MSG_MAX_RAW_VALUE_SIZE);
-	rb_raise(rb_eRuntimeError, data->message_buf);
+	rb_raise(eLimitExceeded, data->message_buf);
       }
       else {
 	*data->value_buf = '$'; /* note: add 1 to l to adjust for this '$' */
@@ -341,7 +341,7 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       if (level >= MIO_MSG_MAX_NESTING) {
 	sprintf(data->message_buf, "array nesting level exceeds max %d",
 		MIO_MSG_MAX_NESTING);
-	rb_raise(rb_eRuntimeError, data->message_buf);
+	rb_raise(eLimitExceeded, data->message_buf);
       }
       else if (index + 2 <= MIO_MSG_MAX_MESSAGE_SIZE) { /* "()" at minimum */
 	data->message_buf[index++] = '(';
@@ -374,7 +374,7 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 
     /* support symbol? */
     default:
-      rb_raise(rb_eRuntimeError, "unsupported element type; must be nil, "
+      rb_raise(rb_eTypeError, "unsupported element type; must be nil, "
 #ifdef HAVE_LONG_LONG
 	       "boolean, string, fixnum, bignum (64-bits), float, or array");
 #else
@@ -440,7 +440,7 @@ mio_encode_tuple(VALUE self, VALUE tuple)
     return rb_str_new2(data->message_buf);
   }
   else {
-    rb_raise(rb_eArgError, "tuple argument must be an array");
+    rb_raise(rb_eTypeError, "tuple argument must be an array");
   }
 
   return Qnil;  /*NOTREACHED*/
@@ -496,12 +496,12 @@ mio_benchmark_b64_encoding(VALUE self, VALUE vn, VALUE viterations)
     }
   }
   else {
-    rb_raise(rb_eArgError,
+    rb_raise(rb_eTypeError,
 	     "numeric value argument must be either a fixnum or a bignum");
   }
 #else
   else {
-    rb_raise(rb_eArgError, "numeric value argument must be a fixnum");
+    rb_raise(rb_eTypeError, "numeric value argument must be a fixnum");
   }
 #endif
 
@@ -538,12 +538,12 @@ mio_benchmark_decimal_int_encoding(VALUE self, VALUE vn, VALUE viterations)
     }
   }
   else {
-    rb_raise(rb_eArgError,
+    rb_raise(rb_eTypeError,
 	     "numeric value argument must be either a fixnum or a bignum");
   }
 #else
   else {
-    rb_raise(rb_eArgError, "numeric value argument must be a fixnum");
+    rb_raise(rb_eTypeError, "numeric value argument must be a fixnum");
   }
 #endif
 
@@ -573,7 +573,7 @@ mio_benchmark_base64_double_encoding(VALUE self, VALUE vn, VALUE viterations)
     }
   }
   else {
-    rb_raise(rb_eArgError, "numeric value argument must be a float");
+    rb_raise(rb_eTypeError, "numeric value argument must be a float");
   }
 
   return Qnil;
@@ -602,7 +602,7 @@ mio_benchmark_decimal_double_encoding(VALUE self, VALUE vn, VALUE viterations)
     }
   }
   else {
-    rb_raise(rb_eArgError, "numeric value argument must be a float");
+    rb_raise(rb_eTypeError, "numeric value argument must be a float");
   }
 
   return Qnil;
@@ -623,6 +623,8 @@ Init_mio(void)
 
   mMarinda = rb_define_module("Marinda");
   cMIO = rb_define_class_under(mMarinda, "MIO", rb_cObject);
+  eLimitExceeded = rb_define_class_under(cMIO, "LimitExceeded",
+					 rb_eStandardError);
 
   DEF_LIMIT(MAX_RAW_VALUE_SIZE);
   DEF_LIMIT(MAX_ENCODED_VALUE_SIZE);

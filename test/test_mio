@@ -89,8 +89,8 @@ class TestMIO < Test::Unit::TestCase
 
   def test_encode_arguments
     assert_raises(ArgumentError) { @m.encode_tuple nil }
-    assert_raises(ArgumentError) { @m.encode_tuple 5 }
-    assert_raises(ArgumentError) { @m.encode_tuple self }
+    assert_raises(TypeError) { @m.encode_tuple 5 }
+    assert_raises(TypeError) { @m.encode_tuple self }
   end
 
 
@@ -272,10 +272,12 @@ class TestMIO < Test::Unit::TestCase
     end
 
     assert_nothing_raised(RuntimeError) { @m.encode_tuple [max_str] }
-    assert_raises(RuntimeError) { @m.encode_tuple [max_str + "!"] }
-    assert_raises(RuntimeError) { @m.encode_tuple big_tuple }
-    assert_nothing_raised(RuntimeError) { @m.encode_tuple deep_tuple }
-    assert_raises(RuntimeError) { @m.encode_tuple [deep_tuple] }
+    assert_raises(Marinda::MIO::LimitExceeded) {
+      @m.encode_tuple [max_str + "!"] }
+    assert_raises(Marinda::MIO::LimitExceeded) { @m.encode_tuple big_tuple }
+    assert_nothing_raised(Marinda::MIO::LimitExceeded) {
+      @m.encode_tuple deep_tuple }
+    assert_raises(Marinda::MIO::LimitExceeded) { @m.encode_tuple [deep_tuple] }
   end
 
 end
