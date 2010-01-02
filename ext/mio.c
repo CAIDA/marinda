@@ -1086,16 +1086,6 @@ decode_array(mio_data_t *data, int level, const char *s, VALUE array)
 		   (int)(s - data->decode_source));
 	}
       }
-      else if (level == 0 && isspace(*s)) {
-	while (*s && isspace(*s)) ++s;
-	if (*s == '\0') {  /* tolerate trailing whitespace at top-level */
-	  return s;
-	}
-	else {
-	  rb_raise(eParseError, "syntax error at pos %d; trailing garbage",
-		   (int)(s - data->decode_source));
-	}
-      }
       else {
 	rb_raise(eParseError, "syntax error at pos %d; expected ',', ')', "
 		 "or end of string", (int)(s - data->decode_source));
@@ -1118,8 +1108,6 @@ mio_decode_tuple(VALUE self, VALUE v)
 
   StringValue(v);
   data->decode_source = s = RSTRING_PTR(v);
-
-  while (*s && *s == ' ') ++s;
 
   if (*s == '`' && strcmp(s, "`E") == 0) {
     return rb_ary_new();
