@@ -77,14 +77,14 @@ VALUE rb_float_new(double d);  /* defined in numeric.c */
 #define MIO_MAX_FIXNUM_B64_LEN 5
 
 #define MIO_MAX_64BIT_FIXNUM_B64_LEN 10
-#define MIO_MAX_64BIT_B64_LEN 11  /* max b64 digits that may fit in 64 bits */
+#define MIO_MAX_64BIT_B64_LEN 11 /* max b64 digits that _may_ fit in 64 bits */
 
 /* XXX can use a smaller value_buf to save space */
 typedef struct {
-  /* message_buf is also used to return error messages to the user */
   char message_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
   char value_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
   const char *decode_source;  /* user-provided string to decode */
+  const char *element_start;  /* start of current element being decoded */
 } mio_data_t;
 
 static const char base64_encode_tbl[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -714,8 +714,8 @@ require 'enumerator'
 	  ++s;
 	}
 	else {
-	  rb_raise(eDecodeLimitExceeded, "<b64-int> is too large for 64 bits "
-		   "at pos %d", (int)(s - data->decode_source));
+	  rb_raise(eDecodeLimitExceeded, "<b64-int> at pos %d is too large "
+	   "for 64 bits", (int)(data->element_start - data->decode_source));
 	}
       }
 #endif
@@ -757,8 +757,8 @@ decode_b64_bignum(mio_data_t *data, const char *s, VALUE array, int sign,
 	  ++s;
 	}
 	else {
-	  rb_raise(eDecodeLimitExceeded, "<b64-int> is too large for 64 bits "
-		   "at pos %d", (int)(s - data->decode_source));
+	  rb_raise(eDecodeLimitExceeded, "<b64-int> at pos %d is too large "
+	   "for 64 bits", (int)(data->element_start - data->decode_source));
 	}
       }
       else {
@@ -766,8 +766,8 @@ decode_b64_bignum(mio_data_t *data, const char *s, VALUE array, int sign,
 	   within 64 bits (imagine a bunch of zeros), we don't allow that
 	   possibility here, since the <b64-int> encoder never uses zero
 	   padding.  */
-	rb_raise(eDecodeLimitExceeded, "<b64-int> is too large for 64 bits "
-		 "at pos %d", (int)(s - data->decode_source));
+	rb_raise(eDecodeLimitExceeded, "<b64-int> at pos %d is too large "
+	   "for 64 bits", (int)(data->element_start - data->decode_source));
       }
     }
     else {
@@ -958,6 +958,7 @@ decode_string(mio_data_t *data, const char *s, VALUE array)
 static const char *
 decode_element(mio_data_t *data, int level, const char *s, VALUE array)
 {
+  data->element_start = s;
   switch (*s) {
   case '\0':
     rb_raise(eParseError, "missing <tuple-element> at pos %d",
@@ -978,7 +979,7 @@ decode_element(mio_data_t *data, int level, const char *s, VALUE array)
     }
     else { /* if (*s == '\0' || *s == ',' || *s == ')' || any other char) */
       rb_raise(eParseError, "truncated <keyword-element> at pos %d",
-	       (int)(s - data->decode_source));
+	       (int)(data->element_start - data->decode_source));
     }
     ++s;
     break;
@@ -987,7 +988,7 @@ decode_element(mio_data_t *data, int level, const char *s, VALUE array)
     ++s;
     if (*s == '\0' || *s == ',' || *s == ')') {
       rb_raise(eParseError, "truncated <b64-int> at pos %d",
-	       (int)(s - data->decode_source));
+	       (int)(data->element_start - data->decode_source));
     }
     else if (*s == '-') {
       rb_ary_push(array, LL2NUM(LLONG_MIN));
@@ -1002,7 +1003,7 @@ decode_element(mio_data_t *data, int level, const char *s, VALUE array)
     ++s;
     if (*s == '\0' || *s == ',' || *s == ')') {
       rb_raise(eParseError, "truncated <float> at pos %d",
-	       (int)(s - data->decode_source));
+	       (int)(data->element_start - data->decode_source));
     }
     else {
       s = decode_float(data, s, array);
@@ -1013,7 +1014,7 @@ decode_element(mio_data_t *data, int level, const char *s, VALUE array)
     ++s;
     if (*s == '\0' || *s == ',' || *s == ')') {
       rb_raise(eParseError, "truncated <string> at pos %d",
-	       (int)(s - data->decode_source));
+	       (int)(data->element_start - data->decode_source));
     }
     else if (*s == '$') {
       rb_ary_push(array, rb_str_new2(""));
