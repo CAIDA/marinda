@@ -39,9 +39,24 @@ $command_line = "#{$0} " + ARGV.join(" ")
 $options = OpenStruct.new
 $options.yaml = true
 $options.bert = false
+$options.convert = true
+$options.encode = true
+$options.decode = true
 $options.scale = 1
 
 opts = OptionParser.new
+
+opts.on("--[no-]convert", TrueClass,  "benchmark converting") do |v|
+  $options.convert = v
+end
+
+opts.on("--[no-]encode", TrueClass,  "benchmark encoding") do |v|
+  $options.encode = v
+end
+
+opts.on("--[no-]decode", TrueClass,  "benchmark decoding") do |v|
+  $options.decode = v
+end
 
 opts.on("--[no-]yaml", TrueClass,  "benchmark YAML") do |v|
   $options.yaml = v
@@ -156,76 +171,6 @@ def bm_double_conversions(m, n, value, descr)
 end
 
 
-def bm_encode(m, n, tuple, descr)
-  n *= $options.scale
-  puts "\n::: encoding #{n} tuples (#{descr}) :::"
-
-  ylen = YAML.dump(tuple).length if $options.yaml
-  mlen = m.encode_tuple(tuple).length
-  blen = BERT.encode(tuple).length if $options.bert
-
-  puts
-  times = Benchmark.bmbm do |bm|
-    if $options.yaml
-      bm.report("YAML") do
-        n.times do YAML.dump tuple end
-      end
-
-      bm.report("YAML-noop") do
-        n.times do m.encode_tuple_noop ylen end
-      end
-    end
-
-    bm.report("MIO") do
-      n.times do m.encode_tuple tuple end
-    end
-
-    bm.report("MIO-noop") do
-      n.times do m.encode_tuple_noop mlen end
-    end
-
-    if $options.bert
-      bm.report("BERT") do
-        n.times do BERT.encode tuple end
-      end
-
-      bm.report("BERT-noop") do
-        n.times do m.encode_tuple_noop blen end
-      end
-    end
-  end
-
-  if $options.yaml || $options.bert
-    if $options.yaml
-      ytms = times.shift
-      nytms = times.shift
-    end
-
-    mtms = times.shift
-    nmtms = times.shift
-
-    if $options.bert
-      btms = times.shift
-      nbtms = times.shift
-    end
-
-    puts
-    ratio "YAML", ytms, "MIO", mtms if $options.yaml
-    ratio "BERT", btms, "MIO", mtms if $options.bert
-    ratio "YAML proper", ytms - nytms,
-      "MIO proper", mtms - nmtms if $options.yaml
-    ratio "BERT proper", btms - nbtms,
-      "MIO proper", mtms - nmtms if $options.bert
-  end
-
-  puts
-  printf "YAML %d bytes\n", ylen if $options.yaml
-  printf "MIO  %d bytes\n", mlen
-  printf "BERT %d bytes\n", blen if $options.bert
-
-  size_ratio "YAML", ylen, "MIO", mlen if $options.yaml
-  size_ratio "BERT", blen, "MIO", mlen if $options.bert
-end
 #----------------------------------------------------------------------------
 
 def bm_encode(m, n, tuple, descr)
@@ -300,6 +245,78 @@ def bm_encode(m, n, tuple, descr)
 end
 
 
+#----------------------------------------------------------------------------
+
+def bm_decode(m, n, tuple, descr)
+  n *= $options.scale
+  puts "\n::: decoding #{n} tuples (#{descr}) :::"
+
+  if $options.yaml
+    yen = YAML.dump(tuple)
+    ylen = yen.length
+  end
+
+  men = m.encode_tuple(tuple)
+  mlen = men.length
+
+  if $options.bert
+    ben = BERT.encode(tuple)
+    blen = ben.length
+  end
+
+  puts
+  times = Benchmark.bmbm do |bm|
+    if $options.yaml
+      bm.report("YAML") do
+        n.times do YAML.load yen end
+      end
+    end
+
+    bm.report("MIO") do
+      n.times do m.decode_tuple men end
+    end
+
+    if $options.bert
+      bm.report("BERT") do
+        n.times do BERT.decode ben end
+      end
+    end
+  end
+
+  if $options.yaml || $options.bert
+    if $options.yaml
+      ytms = times.shift
+    end
+
+    mtms = times.shift
+
+    if $options.bert
+      btms = times.shift
+    end
+
+    puts
+    ratio "YAML", ytms, "MIO", mtms if $options.yaml
+    ratio "BERT", btms, "MIO", mtms if $options.bert
+  end
+
+  puts
+  printf "YAML %d bytes\n", ylen if $options.yaml
+  printf "MIO  %d bytes\n", mlen
+  printf "BERT %d bytes\n", blen if $options.bert
+
+  size_ratio "YAML", ylen, "MIO", mlen if $options.yaml
+  size_ratio "BERT", blen, "MIO", mlen if $options.bert
+end
+
+
+#----------------------------------------------------------------------------
+
+def bm_coding(m, n, tuple, descr)
+  bm_encode m, n, tuple, descr if $options.encode
+  bm_decode m, n, tuple, descr if $options.decode
+end
+
+
 #############################################################################
 ## MAIN
 #############################################################################
@@ -309,57 +326,59 @@ puts "# " + Time.now.to_s
 
 m = Marinda::MIO.new
 
-bm_double_conversions m, 1_000_000, 1.0, "1.0"
-bm_double_conversions m, 1_000_000, 1.23456, "1.23456"
-bm_double_conversions m, 1_000_000, 1.234567890123456, "1.234567890123456"
-bm_double_conversions m, 1_000_000, 123456.0, "123456.0"
-bm_double_conversions m, 1_000_000, 12345678.90123456, "12345678.90123456"
+if $options.convert
+  bm_double_conversions m, 1_000_000, 1.0, "1.0"
+  bm_double_conversions m, 1_000_000, 1.23456, "1.23456"
+  bm_double_conversions m, 1_000_000, 1.234567890123456, "1.234567890123456"
+  bm_double_conversions m, 1_000_000, 123456.0, "123456.0"
+  bm_double_conversions m, 1_000_000, 12345678.90123456, "12345678.90123456"
 
-bm_int_conversions m, 1_000_000, 1, "1"
-bm_int_conversions m, 1_000_000, 2**16, "2**16"
-bm_int_conversions m, 1_000_000, 2**24, "2**24"
-bm_int_conversions m, 1_000_000, 2**30-1, "max 32-bit fixnum"
-bm_int_conversions m, 1_000_000, -2**30, "min 32-bit fixnum"
-bm_int_conversions m, 1_000_000, 2**30, "first bignum or 64-bit fixnum"
-bm_int_conversions m, 1_000_000, 2**63-1, "max 64-bit bignum or fixnum"
-bm_int_conversions m, 1_000_000, -2**63, "min 64-bit bignum or fixnum"
+  bm_int_conversions m, 1_000_000, 1, "1"
+  bm_int_conversions m, 1_000_000, 2**16, "2**16"
+  bm_int_conversions m, 1_000_000, 2**24, "2**24"
+  bm_int_conversions m, 1_000_000, 2**30-1, "max 32-bit fixnum"
+  bm_int_conversions m, 1_000_000, -2**30, "min 32-bit fixnum"
+  bm_int_conversions m, 1_000_000, 2**30, "first bignum or 64-bit fixnum"
+  bm_int_conversions m, 1_000_000, 2**63-1, "max 64-bit bignum or fixnum"
+  bm_int_conversions m, 1_000_000, -2**63, "min 64-bit bignum or fixnum"
+end
 
-bm_encode m, 50000, [], "empty"
+bm_coding m, 50000, [], "empty"
 
-bm_encode m, 25000, [1,2,3,4,5], "5 small fixnums"
+bm_coding m, 25000, [1,2,3,4,5], "5 small fixnums"
 
-bm_encode m, 25000, [2**30-1,2**30-2,2**30-3,2**30-4,2**30-5], "5 large fixnums"
+bm_coding m, 25000, [2**30-1,2**30-2,2**30-3,2**30-4,2**30-5], "5 large fixnums"
 
-bm_encode m, 25000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891], "5 floats"
+bm_coding m, 25000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891], "5 floats"
 
-bm_encode m, 10000, (1..25).to_a, "25 small fixnums"
+bm_coding m, 10000, (1..25).to_a, "25 small fixnums"
 
-bm_encode m, 10000, (1..25).to_a.map{|n| 2**30-n}, "25 large fixnums"
+bm_coding m, 10000, (1..25).to_a.map{|n| 2**30-n}, "25 large fixnums"
 
-bm_encode m, 10000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891] * 5, "25 floats"
+bm_coding m, 10000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891] * 5, "25 floats"
 
-bm_encode m, 200, (1..1000).to_a, "1000 small fixnums"
+bm_coding m, 200, (1..1000).to_a, "1000 small fixnums"
 
-bm_encode m, 200, (1..1000).to_a.map{|n| 2**30-n}, "1000 large fixnums"
+bm_coding m, 200, (1..1000).to_a.map{|n| 2**30-n}, "1000 large fixnums"
 
 s = gen_string 26
-bm_encode m, 50000, [s], "1 string of 26 bytes"
+bm_coding m, 50000, [s], "1 string of 26 bytes"
 
 s = gen_string 1024
-bm_encode m, 50000, [s], "1 string of 1024 bytes"
+bm_coding m, 50000, [s], "1 string of 1024 bytes"
 
 s = gen_string 20000
-bm_encode m, 10000, [s], "1 string of 20000 bytes"
+bm_coding m, 10000, [s], "1 string of 20000 bytes"
 
 a = []
 10.times do a << gen_string(26) end
-bm_encode m, 10000, a, "10 strings of 26 bytes each"
+bm_coding m, 10000, a, "10 strings of 26 bytes each"
 
 90.times do a << gen_string(26) end
-bm_encode m, 1000, a, "100 strings of 26 bytes each"
+bm_coding m, 1000, a, "100 strings of 26 bytes each"
 
 900.times do a << gen_string(26) end
-bm_encode m, 100, a, "1000 strings of 26 bytes each"
+bm_coding m, 100, a, "1000 strings of 26 bytes each"
 
 tuples = [
           [["foo", "bar"], ""],
@@ -381,7 +400,7 @@ tuples = [
           [[2**30-1, 2**30-2, 2**30-3], [[2**30-4]], [[[2**30-5, 2**30-6]]], [[[["foo"]]]]]
 ]
 tuples.each do |t|
-  bm_encode m, 5000, t, t.inspect
+  bm_coding m, 5000, t, t.inspect
 end
 
 puts "\n\n### DONE."
