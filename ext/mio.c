@@ -54,6 +54,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <assert.h>
 
 #include "ruby.h"
@@ -64,26 +65,72 @@
 #include "mio_base64.h"
 #include "mio.h"
 
+VALUE rb_float_new(double d);  /* defined in numeric.c */
+
+/*
+** The maximum number of b64 digits that can be represented in a fixnum.
+**
+** For 32-bit fixnums, the maximum fixnum is 2**30 - 1, or 5 b64 digits
+** (at 6 bits each).  For 64-bit fixnums, the maximum fixnum is 2**62 - 1,
+** or 10 b64 digits.
+*/
+#define MIO_MAX_FIXNUM_B64_LEN 5
+
+#define MIO_MAX_64BIT_FIXNUM_B64_LEN 10
+#define MIO_MAX_64BIT_B64_LEN 11  /* max b64 digits that may fit in 64 bits */
+
 /* XXX can use a smaller value_buf to save space */
 typedef struct {
   /* message_buf is also used to return error messages to the user */
   char message_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
   char value_buf[MIO_MSG_MAX_MESSAGE_SIZE + 1];  /* + NUL-term */
+  const char *decode_source;  /* user-provided string to decode */
 } mio_data_t;
 
 static const char base64_encode_tbl[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/*
+** A base64-decoding table for mapping an encoded 'digit' into the 6-bit
+** value it represents.  A non-base64 character maps to 64 (this works for
+** the full unsigned 8-bit range, including NUL).
+**
+** NOTE: A '=' is not a valid base64 digit.
+*/
+static const unsigned char base64_decode_tbl[256] =
+{
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 62, 64, 64, 64, 63,
+  52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 64, 64, 64, 64, 64, 64,
+  64,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+  15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 64,
+  64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+  41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+  64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+};
+
 static VALUE mMarinda;
-static VALUE cMIO, eLimitExceeded;
+static VALUE cMIO;
+static VALUE eEncodeError, eEncodeLimitExceeded;
+static VALUE eDecodeError, eDecodeLimitExceeded, eParseError;
+
+static const char *
+decode_array(mio_data_t *data, int level, const char *s, VALUE array);
 
 /*=========================================================================*/
 
 static void
 fail_message_length(mio_data_t *data)
 {
-  sprintf(data->message_buf, "message length exceeds max %d",
-	  MIO_MSG_MAX_MESSAGE_SIZE);
-  rb_raise(eLimitExceeded, data->message_buf);
+  rb_raise(eEncodeLimitExceeded, "message length exceeds max %d",
+	   MIO_MSG_MAX_MESSAGE_SIZE);
 }
 
 
@@ -142,7 +189,7 @@ mio_init(VALUE self)
 **      -2**62 == -4611686018427387904 (19 decimal digits vs. 11 b64 digits)
 */
 static size_t
-mio_encode_fixnum(mio_data_t *data, size_t index, VALUE value)
+encode_fixnum(mio_data_t *data, size_t index, VALUE value)
 {
   long n = FIX2LONG(value);  /* never overflows */
   char *s = data->value_buf;
@@ -181,7 +228,7 @@ mio_encode_fixnum(mio_data_t *data, size_t index, VALUE value)
 
 #ifdef HAVE_LONG_LONG
 /*
-** See mio_encode_fixnum() for a description of this representation.
+** See encode_fixnum() for a description of this representation.
 **
 ** Examples:
 **
@@ -193,7 +240,7 @@ mio_encode_fixnum(mio_data_t *data, size_t index, VALUE value)
 ** (64-bit) fixnum, and 2**63 is not representable in 'long long' period.
 */
 static size_t
-mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
+encode_bignum(mio_data_t *data, size_t index, VALUE value)
 {
   long long n = NUM2LL(value);  /* raises RangeError on overflow */
   char *s = data->value_buf;
@@ -247,18 +294,17 @@ mio_encode_bignum(mio_data_t *data, size_t index, VALUE value)
 ** representation and for greater fidelity (infinities, NaNs, etc.).
 */
 static size_t
-mio_encode_float(mio_data_t *data, size_t index, VALUE value)
+encode_float(mio_data_t *data, size_t index, VALUE value)
 {
 #ifdef MIO_BIG_ENDIAN
-  unsigned char *d = (unsigned char *)&RFLOAT(value)->value;
+  const unsigned char *d = (unsigned char *)&RFLOAT(value)->value;
 #elif defined(MIO_LITTLE_ENDIAN)
-  unsigned char *dle = (unsigned char *)&RFLOAT(value)->value;
-  unsigned char *dlep = dle + 7;
+  const unsigned char *dle = (unsigned char *)&RFLOAT(value)->value;
+  const unsigned char *dlep = dle + 7;
   unsigned char d[8], *dp = d;
 
-  while (dlep >= dle) {
-    *dp++ = *dlep--;
-  }
+  *dp++ = *dlep--; *dp++ = *dlep--; *dp++ = *dlep--; *dp++ = *dlep--;
+  *dp++ = *dlep--; *dp++ = *dlep--; *dp++ = *dlep--; *dp++ = *dlep--;
 #else
 #error "MIO_BIG_ENDIAN or MIO_LITTLE_ENDIAN must be defined."
 #endif
@@ -318,7 +364,7 @@ mio_encode_float(mio_data_t *data, size_t index, VALUE value)
 **    syntax.
 */
 static size_t
-mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
+encode_array(mio_data_t *data, int level, size_t index, VALUE tuple)
 {
   long tlen = RARRAY_LEN(tuple);
   long i;
@@ -344,9 +390,9 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 	l = 2;
       }
       else if (RSTRING_LEN(v) > MIO_MSG_MAX_RAW_VALUE_SIZE) {
-	sprintf(data->message_buf, "string value too long; length %ld > max "
-		"length %ld", RSTRING_LEN(v), (long)MIO_MSG_MAX_RAW_VALUE_SIZE);
-	rb_raise(eLimitExceeded, data->message_buf);
+	rb_raise(eEncodeLimitExceeded, "string value too long; length %ld "
+		 "> max length %ld", RSTRING_LEN(v),
+		 (long)MIO_MSG_MAX_RAW_VALUE_SIZE);
       }
       else {
 	*data->value_buf = '$'; /* note: add 1 to l to adjust for this '$' */
@@ -356,11 +402,11 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       break;
 
     case T_FIXNUM:
-      index = mio_encode_fixnum(data, index, v);
+      index = encode_fixnum(data, index, v);
       break;
 
     case T_FLOAT:
-      index = mio_encode_float(data, index, v);
+      index = encode_float(data, index, v);
       break;
 
     case T_NIL:
@@ -369,19 +415,20 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
       break;
 
     case T_ARRAY:
-      if (level >= MIO_MSG_MAX_NESTING) {
-	sprintf(data->message_buf, "array nesting level exceeds max %d",
-		MIO_MSG_MAX_NESTING);
-	rb_raise(eLimitExceeded, data->message_buf);
-      }
-      else if (index + 2 <= MIO_MSG_MAX_MESSAGE_SIZE) { /* "()" at minimum */
-	data->message_buf[index++] = '(';
-	index = mio_encode_array(data, level + 1, index, v);
-	data->value_buf[0] = ')';
-	l = 1;
+      if (level < MIO_MSG_MAX_NESTING) {
+	if (index + 2 <= MIO_MSG_MAX_MESSAGE_SIZE) { /* "()" at minimum */
+	  data->message_buf[index++] = '(';
+	  index = encode_array(data, level + 1, index, v);
+	  data->value_buf[0] = ')';
+	  l = 1;
+	}
+	else {
+	  fail_message_length(data);
+	}
       }
       else {
-	fail_message_length(data);
+	rb_raise(eEncodeLimitExceeded, "array nesting level exceeds max %d",
+		 MIO_MSG_MAX_NESTING);
       }
       break;
 
@@ -399,7 +446,7 @@ mio_encode_array(mio_data_t *data, size_t level, size_t index, VALUE tuple)
 
 #ifdef HAVE_LONG_LONG
     case T_BIGNUM:
-      index = mio_encode_bignum(data, index, v);
+      index = encode_bignum(data, index, v);
       break;
 #endif
 
@@ -466,7 +513,7 @@ mio_encode_tuple(VALUE self, VALUE tuple)
       strcpy(data->message_buf, "`E"); /* special case: empty top-level */
     }
     else {
-      mio_encode_array(data, 0, 0, tuple);
+      encode_array(data, 0, 0, tuple);
     }
     return rb_str_new2(data->message_buf);
   }
@@ -515,14 +562,14 @@ mio_benchmark_b64_encoding(VALUE self, VALUE vn, VALUE viterations)
   }
   else if (TYPE(vn) == T_FIXNUM) {
     while (iterations > 0) {
-      mio_encode_fixnum(data, 0, vn);
+      encode_fixnum(data, 0, vn);
       --iterations;
     }
   }
 #ifdef HAVE_LONG_LONG
   else if (TYPE(vn) == T_BIGNUM) {
     while (iterations > 0) {
-      mio_encode_bignum(data, 0, vn);
+      encode_bignum(data, 0, vn);
       --iterations;
     }
   }
@@ -599,7 +646,7 @@ mio_benchmark_base64_double_encoding(VALUE self, VALUE vn, VALUE viterations)
   }
   else if (TYPE(vn) == T_FLOAT) {
     while (iterations > 0) {
-      mio_encode_float(data, 0, vn);
+      encode_float(data, 0, vn);
       --iterations;
     }
   }
@@ -644,6 +691,444 @@ mio_benchmark_decimal_double_encoding(VALUE self, VALUE vn, VALUE viterations)
 /* DECODING                                                                */
 /*=========================================================================*/
 
+/* Generate cases for matching the first <base64-char> (no '='):
+
+require 'enumerator'
+"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".unpack("C*").each_slice(7) do |x| printf " "; x.each do |c| printf " case '%s':", c.chr end; puts; end
+
+ */
+
+
+#if 0
+      else if (b64_len < MIO_MAX_64BIT_B64_LEN) {
+	/* {n} now has 60 bits of data (== 10 b64 digits), and thus {n} is
+	   <= 2**60 - 1.  If we shift in 6 more bits, {n} will be <= 2**66 - 1,
+	   which exceeds the maximum 64-bit fixnum 2**62 - 1 (or 62 bits of
+           data).  Hence, the upper 4 bits of {n} must be zero if {n} is to
+	   fit; that is, {n} must be <= 2**(60 - 4) - 1 < 2**56 == 1LL << 56.
+	   However, */
+	if (n < (1LL << 56) || (sign == -1 && n == (1LL << 56))) {
+	  ++b64_len;
+	  n <<= 6;
+	  n |= d;
+	  ++s;
+	}
+	else {
+	  rb_raise(eDecodeLimitExceeded, "<b64-int> is too large for 64 bits "
+		   "at pos %d", (int)(s - data->decode_source));
+	}
+      }
+#endif
+
+
+/*
+** Decodes a b64 integer that is too large to fit in a fixnum.
+**
+** This should be called as needed from decode_b64_int().  {n} should be
+** the value decoded so far, and {b64_len} should be the number of b64
+** digits decoded so far.
+*/
+static const char *
+decode_b64_bignum(mio_data_t *data, const char *s, VALUE array, int sign,
+		 long long n, int b64_len)
+{
+  int d;            /* numeric value of the current b64 digit */
+
+  while (*s && *s != ',' && *s != ')') {
+    d = base64_decode_tbl[*s];
+    if (d < 64) {
+      if (b64_len < MIO_MAX_64BIT_FIXNUM_B64_LEN) {
+	++b64_len;
+	n <<= 6;
+	n |= d;
+	++s;
+      }
+      else if (b64_len < MIO_MAX_64BIT_B64_LEN) {
+	/* {n} now has 60 bits of data (== 10 b64 digits), and thus {n} is
+	   <= 2**60 - 1.  If we shift in 6 more bits, {n} will be <= 2**66 - 1,
+	   which exceeds the maximum 64-bit integer 2**63 - 1 (or 63 bits of
+           data).  Hence, the upper 3 bits of {n} must be zero if {n} is to
+	   fit; that is, {n} must be <= 2**(60 - 3) - 1 < 2**57 == 1LL << 57.
+	   Note, however, that negative numbers can be -2**63. */
+	if (n < (1LL << 57) || (sign == -1 && n == (1LL << 57))) {
+	  ++b64_len;
+	  n <<= 6;
+	  n |= d;
+	  ++s;
+	}
+	else {
+	  rb_raise(eDecodeLimitExceeded, "<b64-int> is too large for 64 bits "
+		   "at pos %d", (int)(s - data->decode_source));
+	}
+      }
+      else {
+	/* Although it's theoretically possible for a long <b64-int> to fit
+	   within 64 bits (imagine a bunch of zeros), we don't allow that
+	   possibility here, since the <b64-int> encoder never uses zero
+	   padding.  */
+	rb_raise(eDecodeLimitExceeded, "<b64-int> is too large for 64 bits "
+		 "at pos %d", (int)(s - data->decode_source));
+      }
+    }
+    else {
+      if (b64_len > 0) {
+	rb_raise(eParseError, "illegal character in <b64-int> at pos %d",
+		 (int)(s - data->decode_source));
+      }
+      else {
+	rb_raise(eParseError, "illegal character at the start of <tuple-"
+		 "element> at pos %d", (int)(s - data->decode_source));
+
+      }
+    }
+  }
+
+  if (b64_len > 0) {
+    if (sign == -1) { n = -n; }
+    rb_ary_push(array, LL2NUM(n));
+    return s;
+  }
+  else {
+    /* By this point, all other error cases have been checked in
+       decode_element() before this function was called; namely,
+       truncated <b64-int> and missing <tuple-element>. */
+    rb_bug("MIO INTERNAL ERROR: decode_b64_bignum: b64_len == 0 and *s == %d",
+	   (int)*s);
+  }
+}
+
+
+/*
+** Decodes a b64 integer, switching automatically to decoding a bignum
+** if necessary.
+**
+** For efficiency, we call this function optimistically in decode_element()
+** if the lookahead doesn't match any other lexical element.  Hence, {s}
+** may not be a well-formed <b64-int>, so we should give helpful error
+** messages.
+**
+** Note:
+**   1. {s} should not be the special case "--".
+**   2. {s} should not start with a minus sign; the caller should have already
+**      decoded the minus sign and indicated this by passing -1 for {sign}.
+*/
+static const char *
+decode_b64_int(mio_data_t *data, const char *s, VALUE array, int sign)
+{
+  long n = 0;       /* value of the <b64-int> decoded so far */
+  int b64_len = 0;  /* number of b64 digits decoded so far */
+  int d;            /* numeric value of the current b64 digit */
+
+  while (*s && *s != ',' && *s != ')') {
+    d = base64_decode_tbl[*s];
+    if (d < 64) {
+      if (b64_len < MIO_MAX_FIXNUM_B64_LEN) {
+	++b64_len;
+	n <<= 6;
+	n |= d;
+	++s;
+      }
+      else {
+	return decode_b64_bignum(data, s, array, sign, n, b64_len);
+      }
+    }
+    else {
+      if (b64_len > 0) {
+	rb_raise(eParseError, "illegal character in <b64-int> at pos %d",
+		 (int)(s - data->decode_source));
+      }
+      else {
+	rb_raise(eParseError, "illegal character at the start of <tuple-"
+		 "element> at pos %d", (int)(s - data->decode_source));
+
+      }
+    }
+  }
+
+  if (b64_len > 0) {
+    if (sign == -1) { n = -n; }
+    rb_ary_push(array, LONG2FIX(n));
+    return s;
+  }
+  else {
+    /* By this point, all other error cases have been checked in
+       decode_element() before this function was called; namely,
+       truncated <b64-int> and missing <tuple-element>. */
+    rb_bug("MIO INTERNAL ERROR: decode_b64_int: b64_len == 0 and *s == %d",
+	   (int)*s);
+  }
+}
+
+
+/*
+** See encode_float() for a description of the space optimization.
+*/
+static const char *
+decode_float(mio_data_t *data, const char *s, VALUE array)
+{
+  const char *s0 = s;
+  char *d = data->message_buf;
+  char *dend = &data->message_buf[11];  /* not 12 -- see encode_float() */
+  size_t decode_len;
+
+  /* assert(*s != '\0' && *s != ',' && *s != ')'); */
+  while (*s && *s != ',' && *s != ')') {
+    if (d < dend) {
+      *d++ = *s++;
+    }
+    else {
+      rb_raise(eDecodeLimitExceeded, "<float> at pos %d is too long",
+	       (int)(s0 - data->decode_source));
+    }
+  }
+
+  if (d == dend) {  /* input must be exactly 11 base64 characters */
+    *d++ = '=';  /* restore '=' dropped in encode_float() */
+    *d = '\0';
+    decode_len = base64_decode(data->message_buf,
+			       (unsigned char *)data->value_buf);
+    if (decode_len > 0) {
+      double *d = (double *)data->value_buf;
+#ifdef MIO_LITTLE_ENDIAN
+      unsigned char *dp = (unsigned char *)d;
+      unsigned char *dep = dp + 7;
+      unsigned char t;
+
+      t = *dp; *dp++ = *dep; *dep-- = t; t = *dp; *dp++ = *dep; *dep-- = t;
+      t = *dp; *dp++ = *dep; *dep-- = t; t = *dp; *dp++ = *dep; *dep-- = t;
+#elif !defined(MIO_BIG_ENDIAN)
+#error "MIO_BIG_ENDIAN or MIO_LITTLE_ENDIAN must be defined."
+#endif
+      rb_ary_push(array, rb_float_new(*d));
+      return s;
+    }
+    else {
+      rb_raise(eParseError, "malformed <float> at pos %d",
+	       (int)(s0 - data->decode_source));
+    }
+  }
+  else {
+    rb_raise(eDecodeLimitExceeded, "<float> at pos %d is too short",
+	     (int)(s0 - data->decode_source));
+  }
+}
+
+
+/*
+** First copy the base64 string to {message_buf}, NUL-terminate it, and
+** then decode to {value_buf}.  These buffers should be exactly the right
+** size for each role.
+**
+** If it weren't for the need to NUL-terminate the base64 string, we could
+** skip the copying to {message_buf}.
+*/
+static const char *
+decode_string(mio_data_t *data, const char *s, VALUE array)
+{
+  const char *s0 = s;
+  char *d = data->message_buf;
+  char *dend = &data->message_buf[MIO_MSG_MAX_ENCODED_VALUE_SIZE];
+  size_t decode_len;
+
+  /* assert(*s != '\0' && *s != ',' && *s != ')'); */
+  while (*s && *s != ',' && *s != ')') {
+    if (d < dend) {
+      *d++ = *s++;
+    }
+    else {
+      rb_raise(eDecodeLimitExceeded, "<string> at pos %d is too long "
+	       "for decoding", (int)(s0 - data->decode_source));
+    }
+  }
+  *d = '\0';
+
+  decode_len = base64_decode(data->message_buf,
+			     (unsigned char *)data->value_buf);
+  if (decode_len > 0) {
+    rb_ary_push(array, rb_str_new(data->value_buf, (long)decode_len));
+    return s;
+  }
+  else {
+    rb_raise(eParseError, "malformed <string> at pos %d",
+	     (int)(s0 - data->decode_source));
+  }
+}
+
+
+static const char *
+decode_element(mio_data_t *data, int level, const char *s, VALUE array)
+{
+  switch (*s) {
+  case '\0':
+    rb_raise(eParseError, "missing <tuple-element> at pos %d",
+	     (int)(s - data->decode_source));
+
+  case '_':
+    rb_ary_push(array, Qnil);
+    ++s;
+    break;
+
+  case '`':  /* `T  `F; but `E should not occur here  */
+    ++s;
+    if (*s == 'T') {
+      rb_ary_push(array, Qtrue);
+    }
+    else if (*s == 'F') {
+      rb_ary_push(array, Qfalse);
+    }
+    else { /* if (*s == '\0' || *s == ',' || *s == ')' || any other char) */
+      rb_raise(eParseError, "truncated <keyword-element> at pos %d",
+	       (int)(s - data->decode_source));
+    }
+    ++s;
+    break;
+
+  case '-':
+    ++s;
+    if (*s == '\0' || *s == ',' || *s == ')') {
+      rb_raise(eParseError, "truncated <b64-int> at pos %d",
+	       (int)(s - data->decode_source));
+    }
+    else if (*s == '-') {
+      rb_ary_push(array, LL2NUM(LLONG_MIN));
+      ++s;
+    }
+    else {
+      s = decode_b64_int(data, s, array, -1);
+    }
+    break;
+
+  case '.':
+    ++s;
+    if (*s == '\0' || *s == ',' || *s == ')') {
+      rb_raise(eParseError, "truncated <float> at pos %d",
+	       (int)(s - data->decode_source));
+    }
+    else {
+      s = decode_float(data, s, array);
+    }
+    break;
+
+  case '$':
+    ++s;
+    if (*s == '\0' || *s == ',' || *s == ')') {
+      rb_raise(eParseError, "truncated <string> at pos %d",
+	       (int)(s - data->decode_source));
+    }
+    else if (*s == '$') {
+      rb_ary_push(array, rb_str_new2(""));
+      ++s;
+    }
+    else {
+      s = decode_string(data, s, array);
+    }
+    break;
+
+  case '(':
+    if (level < MIO_MSG_MAX_NESTING) {
+      VALUE subarray = rb_ary_new();
+      s = decode_array(data, level + 1, s + 1, subarray);
+      if (*s == ')') {
+	++s;
+	rb_ary_push(array, subarray);
+      }
+      else {
+	rb_raise(eParseError, "syntax error at pos %d; expected ')'",
+		 (int)(s - data->decode_source));
+      }
+    }
+    else {
+      rb_raise(eDecodeLimitExceeded, "array nesting level exceeds max %d",
+	       MIO_MSG_MAX_NESTING);
+    }
+    break;
+
+  case ',': case ')':
+    rb_bug("MIO INTERNAL ERROR: decode_element: unexpected ',' or ')'");
+
+  default:
+    /* For efficiency, try decoding as <b64-int> without checking first. */
+    s = decode_b64_int(data, s, array, 1);
+    break;
+  }
+
+  return s;
+}
+
+
+/*
+** {level} is the nesting level, where 0 indicates the top-level array,
+** 1 indicates an array element in the top level array, etc.
+**
+** {array} should be the new Array object to populate with the elements
+** at this new level of nesting; that is, the *caller* should allocate the
+** Array object to use and pass it in.
+**
+** Returns a pointer to the closing ')' (or '\0' for the top-level) in the
+** normal case and to the first invalid character in the error case.
+*/
+static const char *
+decode_array(mio_data_t *data, int level, const char *s, VALUE array)
+{
+  s = decode_element(data, level, s, array);
+  for (;;) {
+    if (*s) {
+      if (*s == ',') {
+	s = decode_element(data, level, s + 1, array);
+      }
+      else if (*s == ')') {
+	if (level > 0) {
+	  return s;  /* don't consume ')'; let caller deal with it */
+	}
+	else {
+	  rb_raise(eParseError, "syntax error at pos %d; extra ')'",
+		   (int)(s - data->decode_source));
+	}
+      }
+      else if (level == 0 && isspace(*s)) {
+	while (*s && isspace(*s)) ++s;
+	if (*s == '\0') {  /* tolerate trailing whitespace at top-level */
+	  return s;
+	}
+	else {
+	  rb_raise(eParseError, "syntax error at pos %d; trailing garbage",
+		   (int)(s - data->decode_source));
+	}
+      }
+      else {
+	rb_raise(eParseError, "syntax error at pos %d; expected ',', ')', "
+		 "or end of string", (int)(s - data->decode_source));
+      }
+    }
+    else {
+      return s;
+    }
+  }
+}
+
+
+static VALUE
+mio_decode_tuple(VALUE self, VALUE v)
+{
+  mio_data_t *data = NULL;
+  const char *s;
+
+  Data_Get_Struct(self, mio_data_t, data);
+
+  StringValue(v);
+  data->decode_source = s = RSTRING_PTR(v);
+
+  while (*s && *s == ' ') ++s;
+
+  if (*s == '`' && strcmp(s, "`E") == 0) {
+    return rb_ary_new();
+  }
+  else {
+    VALUE retval = rb_ary_new();
+    decode_array(data, 0, s, retval);
+    return retval;
+  }
+}
 
 
 /***************************************************************************/
@@ -660,8 +1145,15 @@ Init_mio(void)
 
   mMarinda = rb_define_module("Marinda");
   cMIO = rb_define_class_under(mMarinda, "MIO", rb_cObject);
-  eLimitExceeded = rb_define_class_under(cMIO, "LimitExceeded",
-					 rb_eStandardError);
+
+  eEncodeError = rb_define_class_under(cMIO, "EncodeError", rb_eStandardError);
+  eEncodeLimitExceeded = rb_define_class_under(cMIO, "EncodeLimitExceeded",
+					       eEncodeError);
+
+  eDecodeError = rb_define_class_under(cMIO, "DecodeError", rb_eStandardError);
+  eDecodeLimitExceeded = rb_define_class_under(cMIO, "DecodeLimitExceeded",
+					       eDecodeError);
+  eParseError = rb_define_class_under(cMIO, "ParseError", eDecodeError);
 
   DEF_LIMIT(MAX_RAW_VALUE_SIZE);
   DEF_LIMIT(MAX_ENCODED_VALUE_SIZE);
@@ -681,6 +1173,7 @@ Init_mio(void)
 		   mio_benchmark_base64_double_encoding, 2);
   rb_define_method(cMIO, "benchmark_decimal_double_encoding",
 		   mio_benchmark_decimal_double_encoding, 2);
+  rb_define_method(cMIO, "decode_tuple", mio_decode_tuple, 1);
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");
