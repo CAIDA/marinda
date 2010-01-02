@@ -178,7 +178,7 @@ def bm_encode(m, n, tuple, descr)
   puts "\n::: encoding #{n} tuples (#{descr}) :::"
 
   ylen = YAML.dump(tuple).length if $options.yaml
-  mlen = m.encode_tuple(tuple).length
+  mlen = m.encode(tuple).length
   blen = BERT.encode(tuple).length if $options.bert
 
   puts
@@ -189,16 +189,16 @@ def bm_encode(m, n, tuple, descr)
       end
 
       bm.report("YAML-noop") do
-        n.times do m.encode_tuple_noop ylen end
+        n.times do m.encode_noop ylen end
       end
     end
 
     bm.report("MIO") do
-      n.times do m.encode_tuple tuple end
+      n.times do m.encode tuple end
     end
 
     bm.report("MIO-noop") do
-      n.times do m.encode_tuple_noop mlen end
+      n.times do m.encode_noop mlen end
     end
 
     if $options.bert
@@ -207,7 +207,7 @@ def bm_encode(m, n, tuple, descr)
       end
 
       bm.report("BERT-noop") do
-        n.times do m.encode_tuple_noop blen end
+        n.times do m.encode_noop blen end
       end
     end
   end
@@ -256,7 +256,7 @@ def bm_decode(m, n, tuple, descr)
     ylen = yen.length
   end
 
-  men = m.encode_tuple(tuple)
+  men = m.encode(tuple)
   mlen = men.length
 
   if $options.bert
@@ -273,7 +273,7 @@ def bm_decode(m, n, tuple, descr)
     end
 
     bm.report("MIO") do
-      n.times do m.decode_tuple men end
+      n.times do m.decode men end
     end
 
     if $options.bert

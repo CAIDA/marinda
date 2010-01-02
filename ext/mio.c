@@ -175,15 +175,15 @@ mio_init(VALUE self)
 **
 ** Examples:
 **
-**   >> m.encode_tuple [1] => "B"
-**   >> m.encode_tuple [-1] => "-B"
+**   >> m.encode [1] => "B"
+**   >> m.encode [-1] => "-B"
 **
 **   On 64-bit platforms:
 **
-**   >> m.encode_tuple [2**32] => "EAAAAA"
-**   >> m.encode_tuple [-2**32] => "-EAAAAA"          # 'A' == all bits clear
-**   >> m.encode_tuple [2**62 - 1] => "D//////////"   # '/' == all bits set
-**   >> m.encode_tuple [-2**62] => "-EAAAAAAAAAA"
+**   >> m.encode [2**32] => "EAAAAA"
+**   >> m.encode [-2**32] => "-EAAAAA"          # 'A' == all bits clear
+**   >> m.encode [2**62 - 1] => "D//////////"   # '/' == all bits set
+**   >> m.encode [-2**62] => "-EAAAAAAAAAA"
 **
 **      -2**32 == -4294967296 (10 decimal digits vs. 6 base64 digits)
 **      -2**62 == -4611686018427387904 (19 decimal digits vs. 11 b64 digits)
@@ -232,9 +232,9 @@ encode_fixnum(mio_data_t *data, size_t index, VALUE value)
 **
 ** Examples:
 **
-**   >> m.encode_tuple [2**62] => "EAAAAAAAAAA"
-**   >> m.encode_tuple [2**63 - 1] => "H//////////"  (9223372036854775807)
-**   >> m.encode_tuple [-2**63] => "--"             (-9223372036854775808)
+**   >> m.encode [2**62] => "EAAAAAAAAAA"
+**   >> m.encode [2**63 - 1] => "H//////////"  (9223372036854775807)
+**   >> m.encode [-2**63] => "--"             (-9223372036854775808)
 **
 ** Even on 64-bit platforms, 2**62 is the first value not representable in
 ** (64-bit) fixnum, and 2**63 is not representable in 'long long' period.
@@ -499,7 +499,7 @@ encode_array(mio_data_t *data, int level, size_t index, VALUE tuple)
 ** Ruby runtime exception.
 */
 static VALUE
-mio_encode_tuple(VALUE self, VALUE tuple)
+mio_encode(VALUE self, VALUE tuple)
 {
   mio_data_t *data = NULL;
 
@@ -530,7 +530,7 @@ mio_encode_tuple(VALUE self, VALUE tuple)
 ** This can be used to determine the Ruby overhead in wrapping a C function.
 */
 static VALUE
-mio_encode_tuple_noop(VALUE self, VALUE vlength)
+mio_encode_noop(VALUE self, VALUE vlength)
 {
   mio_data_t *data = NULL;
   long length = NUM2ULONG(vlength);
@@ -1099,7 +1099,7 @@ decode_array(mio_data_t *data, int level, const char *s, VALUE array)
 
 
 static VALUE
-mio_decode_tuple(VALUE self, VALUE v)
+mio_decode(VALUE self, VALUE v)
 {
   mio_data_t *data = NULL;
   const char *s;
@@ -1152,8 +1152,8 @@ Init_mio(void)
   rb_define_alloc_func(cMIO, mio_alloc);
 
   rb_define_method(cMIO, "initialize", mio_init, 0);
-  rb_define_method(cMIO, "encode_tuple", mio_encode_tuple, 1);
-  rb_define_method(cMIO, "encode_tuple_noop", mio_encode_tuple_noop, 1);
+  rb_define_method(cMIO, "encode", mio_encode, 1);
+  rb_define_method(cMIO, "encode_noop", mio_encode_noop, 1);
   rb_define_method(cMIO, "benchmark_b64_encoding",
 		   mio_benchmark_b64_encoding, 2);
   rb_define_method(cMIO, "benchmark_decimal_int_encoding",
@@ -1162,7 +1162,7 @@ Init_mio(void)
 		   mio_benchmark_base64_double_encoding, 2);
   rb_define_method(cMIO, "benchmark_decimal_double_encoding",
 		   mio_benchmark_decimal_double_encoding, 2);
-  rb_define_method(cMIO, "decode_tuple", mio_decode_tuple, 1);
+  rb_define_method(cMIO, "decode", mio_decode, 1);
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");

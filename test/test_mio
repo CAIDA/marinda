@@ -92,9 +92,9 @@ class TestMIO < Test::Unit::TestCase
   #=========================================================================
 
   def test_encode_arguments
-    assert_raises(ArgumentError) { @m.encode_tuple nil }
-    assert_raises(TypeError) { @m.encode_tuple 5 }
-    assert_raises(TypeError) { @m.encode_tuple self }
+    assert_raises(ArgumentError) { @m.encode nil }
+    assert_raises(TypeError) { @m.encode 5 }
+    assert_raises(TypeError) { @m.encode self }
   end
 
 
@@ -125,47 +125,47 @@ class TestMIO < Test::Unit::TestCase
 
 
   def test_encode_basic_values
-    assert_equal("`E", @m.encode_tuple([]))
-    assert_equal("_", @m.encode_tuple([nil]))
-    assert_equal("B", @m.encode_tuple([1]))
-    assert_equal("$$", @m.encode_tuple([""]))
-    assert_equal("$Zm9v", @m.encode_tuple(["foo"]))
-    assert_equal("`T", @m.encode_tuple([true]))
-    assert_equal("`F", @m.encode_tuple([false]))
+    assert_equal("`E", @m.encode([]))
+    assert_equal("_", @m.encode([nil]))
+    assert_equal("B", @m.encode([1]))
+    assert_equal("$$", @m.encode([""]))
+    assert_equal("$Zm9v", @m.encode(["foo"]))
+    assert_equal("`T", @m.encode([true]))
+    assert_equal("`F", @m.encode([false]))
 
     # 32-bit fixnum
-    assert_equal("EA", @m.encode_tuple([2**8]))
-    assert_equal("QAA", @m.encode_tuple([2**16]))
-    assert_equal("BAAAA", @m.encode_tuple([2**24]))
-    assert_equal("-EA", @m.encode_tuple([-2**8]))
-    assert_equal("-QAA", @m.encode_tuple([-2**16]))
-    assert_equal("-BAAAA", @m.encode_tuple([-2**24]))
-    assert_equal("/////", @m.encode_tuple([2**30-1]))  # max
-    assert_equal("-BAAAAA", @m.encode_tuple([-2**30]))  # min
+    assert_equal("EA", @m.encode([2**8]))
+    assert_equal("QAA", @m.encode([2**16]))
+    assert_equal("BAAAA", @m.encode([2**24]))
+    assert_equal("-EA", @m.encode([-2**8]))
+    assert_equal("-QAA", @m.encode([-2**16]))
+    assert_equal("-BAAAA", @m.encode([-2**24]))
+    assert_equal("/////", @m.encode([2**30-1]))  # max
+    assert_equal("-BAAAAA", @m.encode([-2**30]))  # min
 
     # 64-bit fixnum or bignum
-    assert_equal("EAAAAA", @m.encode_tuple([2**32]))
-    assert_equal("-EAAAAA", @m.encode_tuple([-2**32]))
-    assert_equal("D//////////", @m.encode_tuple([2**62 - 1]))
-    assert_equal("-EAAAAAAAAAA", @m.encode_tuple([-2**62]))
+    assert_equal("EAAAAA", @m.encode([2**32]))
+    assert_equal("-EAAAAA", @m.encode([-2**32]))
+    assert_equal("D//////////", @m.encode([2**62 - 1]))
+    assert_equal("-EAAAAAAAAAA", @m.encode([-2**62]))
 
     # bignum
-    assert_equal("EAAAAAAAAAA", @m.encode_tuple([2**62]))
-    assert_equal("H//////////", @m.encode_tuple([2**63 - 1]))  # max
-    assert_equal("--", @m.encode_tuple([-2**63]))  # min
+    assert_equal("EAAAAAAAAAA", @m.encode([2**62]))
+    assert_equal("H//////////", @m.encode([2**63 - 1]))  # max
+    assert_equal("--", @m.encode([-2**63]))  # min
 
     # floats (checking byte ordering as well as encoding)
     # ".QWeMKdzW6dw=".unpack("m").first.unpack("G")
-    assert_equal(".P/AAAAAAAAA", @m.encode_tuple([1.0]))
-    assert_equal(".P/AAAAAAAAE", @m.encode_tuple([1.0000000000000002]))
-    assert_equal(".QWeMKdzW6dw", @m.encode_tuple([12345678.90123456]))
+    assert_equal(".P/AAAAAAAAA", @m.encode([1.0]))
+    assert_equal(".P/AAAAAAAAE", @m.encode([1.0000000000000002]))
+    assert_equal(".QWeMKdzW6dw", @m.encode([12345678.90123456]))
 
     puts if $options.verbose
     100.times do
       x = rand()  # [0.0, 1.0)
       s = [[x].pack("G")].pack("m").gsub!(/\=\n/, "")
       printf "%f => %s\n", x, s if $options.verbose
-      assert_equal("." + s, @m.encode_tuple([x]))
+      assert_equal("." + s, @m.encode([x]))
     end
   end
 
@@ -176,14 +176,14 @@ class TestMIO < Test::Unit::TestCase
 
     1000.times do
       n = rand(2**32) - 2**31  # => [-2**31, 2**31-1]
-      s = @m.encode_tuple [n]
+      s = @m.encode [n]
       printf "\n%d => %s\n", n, s if $options.verbose
       check_b64_encoding s, n
     end
 
     1000.times do
       n = rand(2**64) - 2**63  # => [-2**63, 2**63-1]
-      s = @m.encode_tuple [n]
+      s = @m.encode [n]
       printf "\n%d => %s\n", n, s if $options.verbose
       check_b64_encoding s, n
     end
@@ -191,70 +191,70 @@ class TestMIO < Test::Unit::TestCase
 
 
   def test_encode_flat_array
-    assert_equal("B,C", @m.encode_tuple([1, 2]))
-    assert_equal("B,C,D", @m.encode_tuple([1, 2, 3]))
-    assert_equal("B,$Zm9v", @m.encode_tuple([1, "foo"]))
-    assert_equal("B,$Zm9v,`T,$YmFy", @m.encode_tuple([1, "foo", true, "bar"]))
-    assert_equal("$Zm9v,$YmFy,$$", @m.encode_tuple(["foo", "bar", ""]))
-    assert_equal("$Zm9v,$YmFy,$$,$$", @m.encode_tuple(["foo", "bar", "", ""]))
-    assert_equal("_,C,_,D,_,_", @m.encode_tuple([nil, 2, nil, 3, nil, nil]))
+    assert_equal("B,C", @m.encode([1, 2]))
+    assert_equal("B,C,D", @m.encode([1, 2, 3]))
+    assert_equal("B,$Zm9v", @m.encode([1, "foo"]))
+    assert_equal("B,$Zm9v,`T,$YmFy", @m.encode([1, "foo", true, "bar"]))
+    assert_equal("$Zm9v,$YmFy,$$", @m.encode(["foo", "bar", ""]))
+    assert_equal("$Zm9v,$YmFy,$$,$$", @m.encode(["foo", "bar", "", ""]))
+    assert_equal("_,C,_,D,_,_", @m.encode([nil, 2, nil, 3, nil, nil]))
   end
 
 
   def test_encode_nested_array_level_1
-    assert_equal("()", @m.encode_tuple([[]]))
-    assert_equal("(_)", @m.encode_tuple([[nil]]))
-    assert_equal("(q)", @m.encode_tuple([[42]]))
-    assert_equal("(B,C,D)", @m.encode_tuple([[1, 2, 3]]))
-    assert_equal("(B,$Zm9v,$YmFy)", @m.encode_tuple([[1, "foo", "bar"]]))
+    assert_equal("()", @m.encode([[]]))
+    assert_equal("(_)", @m.encode([[nil]]))
+    assert_equal("(q)", @m.encode([[42]]))
+    assert_equal("(B,C,D)", @m.encode([[1, 2, 3]]))
+    assert_equal("(B,$Zm9v,$YmFy)", @m.encode([[1, "foo", "bar"]]))
 
-    assert_equal("(),()", @m.encode_tuple([[], []]))
-    assert_equal("(),(),()", @m.encode_tuple([[], [], []]))
+    assert_equal("(),()", @m.encode([[], []]))
+    assert_equal("(),(),()", @m.encode([[], [], []]))
 
-    assert_equal("(B),C,D", @m.encode_tuple([[1], 2, 3]))
-    assert_equal("B,(C),D", @m.encode_tuple([1, [2], 3]))
-    assert_equal("B,C,(D)", @m.encode_tuple([1, 2, [3]]))
+    assert_equal("(B),C,D", @m.encode([[1], 2, 3]))
+    assert_equal("B,(C),D", @m.encode([1, [2], 3]))
+    assert_equal("B,C,(D)", @m.encode([1, 2, [3]]))
 
-    assert_equal("B,($Zm9v,$YmFy)", @m.encode_tuple([1, ["foo", "bar"]]))
-    assert_equal("($Zm9v,$YmFy),$$", @m.encode_tuple([["foo", "bar"], ""]))
-    assert_equal("($Zm9v,$YmFy),($$,$$)", @m.encode_tuple([["foo", "bar"], ["", ""]]))
-    assert_equal("(_,C,_),(D),_,(_)", @m.encode_tuple([[nil, 2, nil], [3], nil, [nil]]))
+    assert_equal("B,($Zm9v,$YmFy)", @m.encode([1, ["foo", "bar"]]))
+    assert_equal("($Zm9v,$YmFy),$$", @m.encode([["foo", "bar"], ""]))
+    assert_equal("($Zm9v,$YmFy),($$,$$)", @m.encode([["foo", "bar"], ["", ""]]))
+    assert_equal("(_,C,_),(D),_,(_)", @m.encode([[nil, 2, nil], [3], nil, [nil]]))
   end
 
 
   def test_encode_nested_array_level_2
-    assert_equal("(())", @m.encode_tuple([[[]]]))
-    assert_equal("((_))", @m.encode_tuple([[[nil]]]))
-    assert_equal("((q))", @m.encode_tuple([[[42]]]))
-    assert_equal("((B,C,D))", @m.encode_tuple([[[1, 2, 3]]]))
-    assert_equal("((B,$Zm9v,$YmFy))", @m.encode_tuple([[[1, "foo", "bar"]]]))
+    assert_equal("(())", @m.encode([[[]]]))
+    assert_equal("((_))", @m.encode([[[nil]]]))
+    assert_equal("((q))", @m.encode([[[42]]]))
+    assert_equal("((B,C,D))", @m.encode([[[1, 2, 3]]]))
+    assert_equal("((B,$Zm9v,$YmFy))", @m.encode([[[1, "foo", "bar"]]]))
 
-    assert_equal("((),())", @m.encode_tuple([[[], []]]))
-    assert_equal("((),(),())", @m.encode_tuple([[[], [], []]]))
+    assert_equal("((),())", @m.encode([[[], []]]))
+    assert_equal("((),(),())", @m.encode([[[], [], []]]))
 
-    assert_equal("((B),C,D)", @m.encode_tuple([[[1], 2, 3]]))
-    assert_equal("(B,(C),D)", @m.encode_tuple([[1, [2], 3]]))
-    assert_equal("(B,C,(D))", @m.encode_tuple([[1, 2, [3]]]))
+    assert_equal("((B),C,D)", @m.encode([[[1], 2, 3]]))
+    assert_equal("(B,(C),D)", @m.encode([[1, [2], 3]]))
+    assert_equal("(B,C,(D))", @m.encode([[1, 2, [3]]]))
 
-    assert_equal("B,(($Zm9v),$YmFy)", @m.encode_tuple([1, [["foo"], "bar"]]))
-    assert_equal("B,($Zm9v,($YmFy))", @m.encode_tuple([1, ["foo", ["bar"]]]))
-    assert_equal("B,($Zm9v,(C,D,$YmFy))", @m.encode_tuple([1, ["foo", [2, 3, "bar"]]]))
-    assert_equal("(($Zm9v,$YmFy),(C,D)),($$,$$)", @m.encode_tuple([[["foo", "bar"], [2, 3]], ["", ""]]))
+    assert_equal("B,(($Zm9v),$YmFy)", @m.encode([1, [["foo"], "bar"]]))
+    assert_equal("B,($Zm9v,($YmFy))", @m.encode([1, ["foo", ["bar"]]]))
+    assert_equal("B,($Zm9v,(C,D,$YmFy))", @m.encode([1, ["foo", [2, 3, "bar"]]]))
+    assert_equal("(($Zm9v,$YmFy),(C,D)),($$,$$)", @m.encode([[["foo", "bar"], [2, 3]], ["", ""]]))
   end
 
 
   def test_encode_nested_array_level_n
-    assert_equal("((()))", @m.encode_tuple([[[[]]]]))
-    assert_equal("(((())))", @m.encode_tuple([[[[[]]]]]))
-    assert_equal("((((_))))", @m.encode_tuple([[[[[nil]]]]]))
-    assert_equal("((((q))))", @m.encode_tuple([[[[[42]]]]]))
-    assert_equal("((((B,C,D))))", @m.encode_tuple([[[[[1, 2, 3]]]]]))
-    assert_equal("((((B,$Zm9v,$YmFy))))", @m.encode_tuple([[[[[1, "foo", "bar"]]]]]))
+    assert_equal("((()))", @m.encode([[[[]]]]))
+    assert_equal("(((())))", @m.encode([[[[[]]]]]))
+    assert_equal("((((_))))", @m.encode([[[[[nil]]]]]))
+    assert_equal("((((q))))", @m.encode([[[[[42]]]]]))
+    assert_equal("((((B,C,D))))", @m.encode([[[[[1, 2, 3]]]]]))
+    assert_equal("((((B,$Zm9v,$YmFy))))", @m.encode([[[[[1, "foo", "bar"]]]]]))
 
-    assert_equal("(),(()),((())),(((())))", @m.encode_tuple([[], [[]], [[[]]], [[[[]]]]]))
-    assert_equal("(((()))),((())),(()),()", @m.encode_tuple([[[[[]]]], [[[]]], [[]], []]))
+    assert_equal("(),(()),((())),(((())))", @m.encode([[], [[]], [[[]]], [[[[]]]]]))
+    assert_equal("(((()))),((())),(()),()", @m.encode([[[[[]]]], [[[]]], [[]], []]))
 
-    assert_equal("(B,C,D),((E)),(((F,G))),(((($Zm9v))))", @m.encode_tuple([[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]))
+    assert_equal("(B,C,D),((E)),(((F,G))),(((($Zm9v))))", @m.encode([[1, 2, 3], [[4]], [[[5, 6]]], [[[["foo"]]]]]))
   end
 
 
@@ -275,15 +275,15 @@ class TestMIO < Test::Unit::TestCase
       level += 1
     end
 
-    assert_nothing_raised(RuntimeError) { @m.encode_tuple [max_str] }
+    assert_nothing_raised(RuntimeError) { @m.encode [max_str] }
     assert_raises(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode_tuple [max_str + "!"] }
+      @m.encode [max_str + "!"] }
     assert_raises(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode_tuple big_tuple }
+      @m.encode big_tuple }
     assert_nothing_raised(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode_tuple deep_tuple }
+      @m.encode deep_tuple }
     assert_raises(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode_tuple [deep_tuple] }
+      @m.encode [deep_tuple] }
   end
 
 
@@ -292,47 +292,47 @@ class TestMIO < Test::Unit::TestCase
   #=========================================================================
 
   def test_decode_basic_values
-    assert_equal([], @m.decode_tuple("`E"))
-    assert_equal([nil], @m.decode_tuple("_"))
-    assert_equal([true], @m.decode_tuple("`T"))
-    assert_equal([false], @m.decode_tuple("`F"))
-    assert_equal([1], @m.decode_tuple("B"))
-    assert_equal([""], @m.decode_tuple("$$"))
-    assert_equal(["foo"], @m.decode_tuple("$Zm9v"))
+    assert_equal([], @m.decode("`E"))
+    assert_equal([nil], @m.decode("_"))
+    assert_equal([true], @m.decode("`T"))
+    assert_equal([false], @m.decode("`F"))
+    assert_equal([1], @m.decode("B"))
+    assert_equal([""], @m.decode("$$"))
+    assert_equal(["foo"], @m.decode("$Zm9v"))
 
     # 32-bit fixnum
-    assert_equal([2**8], @m.decode_tuple("EA"))
-    assert_equal([2**16], @m.decode_tuple("QAA"))
-    assert_equal([2**24], @m.decode_tuple("BAAAA"))
-    assert_equal([-2**8], @m.decode_tuple("-EA"))
-    assert_equal([-2**16], @m.decode_tuple("-QAA"))
-    assert_equal([-2**24], @m.decode_tuple("-BAAAA"))
-    assert_equal([2**30-1], @m.decode_tuple("/////"))  # max
-    assert_equal([-2**30], @m.decode_tuple("-BAAAAA"))  # min
+    assert_equal([2**8], @m.decode("EA"))
+    assert_equal([2**16], @m.decode("QAA"))
+    assert_equal([2**24], @m.decode("BAAAA"))
+    assert_equal([-2**8], @m.decode("-EA"))
+    assert_equal([-2**16], @m.decode("-QAA"))
+    assert_equal([-2**24], @m.decode("-BAAAA"))
+    assert_equal([2**30-1], @m.decode("/////"))  # max
+    assert_equal([-2**30], @m.decode("-BAAAAA"))  # min
 
     # 64-bit fixnum or bignum
-    assert_equal([2**32], @m.decode_tuple("EAAAAA"))
-    assert_equal([-2**32], @m.decode_tuple("-EAAAAA"))
-    assert_equal([2**62 - 1], @m.decode_tuple("D//////////"))
-    assert_equal([-2**62], @m.decode_tuple("-EAAAAAAAAAA"))
+    assert_equal([2**32], @m.decode("EAAAAA"))
+    assert_equal([-2**32], @m.decode("-EAAAAA"))
+    assert_equal([2**62 - 1], @m.decode("D//////////"))
+    assert_equal([-2**62], @m.decode("-EAAAAAAAAAA"))
 
     # bignum
-    assert_equal([2**62], @m.decode_tuple("EAAAAAAAAAA"))
-    assert_equal([2**63 - 1], @m.decode_tuple("H//////////"))  # max
-    assert_equal([-2**63], @m.decode_tuple("--"))  # min
+    assert_equal([2**62], @m.decode("EAAAAAAAAAA"))
+    assert_equal([2**63 - 1], @m.decode("H//////////"))  # max
+    assert_equal([-2**63], @m.decode("--"))  # min
 
     # floats (checking byte ordering as well as encoding)
     # ".QWeMKdzW6dw=".unpack("m").first.unpack("G")
-    assert_equal([1.0], @m.decode_tuple(".P/AAAAAAAAA"))
-    assert_equal([1.0000000000000002], @m.decode_tuple(".P/AAAAAAAAE"))
-    assert_equal([12345678.90123456], @m.decode_tuple(".QWeMKdzW6dw"))
+    assert_equal([1.0], @m.decode(".P/AAAAAAAAA"))
+    assert_equal([1.0000000000000002], @m.decode(".P/AAAAAAAAE"))
+    assert_equal([12345678.90123456], @m.decode(".QWeMKdzW6dw"))
 
     puts if $options.verbose
     100.times do
       x = rand()  # [0.0, 1.0)
       s = [[x].pack("G")].pack("m").gsub!(/\=\n/, "")
       printf "%f => %s\n", x, s if $options.verbose
-      assert_equal([x], @m.decode_tuple("." + s))
+      assert_equal([x], @m.decode("." + s))
     end
 
     # XXX test random string decoding
