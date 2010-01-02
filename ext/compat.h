@@ -30,19 +30,23 @@
 */
 
 #ifndef RSTRING_PTR
-#define RSTRING_PTR(s) (RSTRING(s)->ptr)
+#define RSTRING_PTR(v) (RSTRING(v)->ptr)
 #endif
 
 #ifndef RSTRING_LEN
-#define RSTRING_LEN(s) (RSTRING(s)->len)
+#define RSTRING_LEN(v) (RSTRING(v)->len)
 #endif
 
 #ifndef RARRAY_PTR
-#define RARRAY_PTR(s) (RARRAY(s)->ptr)
+#define RARRAY_PTR(v) (RARRAY(v)->ptr)
 #endif
 
 #ifndef RARRAY_LEN
-#define RARRAY_LEN(s) (RARRAY(s)->len)
+#define RARRAY_LEN(v) (RARRAY(v)->len)
+#endif
+
+#ifndef RFLOAT_VALUE
+#define RFLOAT_VALUE(v) (RFLOAT(v)->value)
 #endif
 
 #endif  /* __COMPAT_H */

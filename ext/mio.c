@@ -297,9 +297,9 @@ static size_t
 encode_float(mio_data_t *data, size_t index, VALUE value)
 {
 #ifdef MIO_BIG_ENDIAN
-  const unsigned char *d = (unsigned char *)&RFLOAT(value)->value;
+  const unsigned char *d = (unsigned char *)&(RFLOAT_VALUE(value));
 #elif defined(MIO_LITTLE_ENDIAN)
-  const unsigned char *dle = (unsigned char *)&RFLOAT(value)->value;
+  const unsigned char *dle = (unsigned char *)&(RFLOAT_VALUE(value));
   const unsigned char *dlep = dle + 7;
   unsigned char d[8], *dp = d;
 
@@ -675,7 +675,7 @@ mio_benchmark_decimal_double_encoding(VALUE self, VALUE vn, VALUE viterations)
   }
   else if (TYPE(vn) == T_FLOAT) {
     while (iterations > 0) {
-      sprintf(data->value_buf, "%f", RFLOAT(vn)->value);
+      sprintf(data->value_buf, "%f", RFLOAT_VALUE(vn));
       --iterations;
     }
   }
