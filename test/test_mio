@@ -92,7 +92,7 @@ class TestMIO < Test::Unit::TestCase
     assert_raises(TypeError) { @m.encode 5 }
     assert_raises(TypeError) { @m.encode self }
 
-    assert_raises(ArgumentError) { @m.decode nil }
+    assert_raises(TypeError) { @m.decode nil }
     assert_raises(TypeError) { @m.decode 5 }
     assert_raises(TypeError) { @m.decode self }
   end

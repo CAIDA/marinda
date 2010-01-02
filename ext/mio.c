@@ -1066,11 +1066,21 @@ decode_element(mio_data_t *data, int level, const char *s, VALUE array)
 ** Array object to use and pass it in.
 **
 ** Returns a pointer to the closing ')' (or '\0' for the top-level) in the
-** normal case and to the first invalid character in the error case.
+** normal case.
 */
 static const char *
 decode_array(mio_data_t *data, int level, const char *s, VALUE array)
 {
+  if (*s == ')') { /* empty subarray--that is, "()"; nothing to do */
+    if (level > 0) {
+      return s;  /* don't consume ')'; let caller deal with it */
+    }
+    else {
+      rb_raise(eParseError, "syntax error at pos %d; extra ')'",
+	       (int)(s - data->decode_source));
+    }
+  }
+
   s = decode_element(data, level, s, array);
   for (;;) {
     if (*s) {
