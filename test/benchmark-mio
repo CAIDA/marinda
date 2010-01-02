@@ -368,7 +368,7 @@ s = gen_string 1024
 bm_coding m, 50000, [s], "1 string of 1024 bytes"
 
 s = gen_string 20000
-bm_coding m, 10000, [s], "1 string of 20000 bytes"
+bm_coding m, 5000, [s], "1 string of 20000 bytes"
 
 a = []
 10.times do a << gen_string(26) end
@@ -400,7 +400,7 @@ tuples = [
           [[2**30-1, 2**30-2, 2**30-3], [[2**30-4]], [[[2**30-5, 2**30-6]]], [[[["foo"]]]]]
 ]
 tuples.each do |t|
-  bm_coding m, 5000, t, t.inspect
+  bm_coding m, 15000, t, t.inspect
 end
 
 puts "\n\n### DONE."
