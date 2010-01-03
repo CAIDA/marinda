@@ -923,6 +923,7 @@ decode_float(mio_data_t *data, const char *s, VALUE array)
 ** skip the copying to {message_buf}.
 */
 static const char *
+#if 0
 decode_string(mio_data_t *data, const char *s, VALUE array)
 {
   const char *s0 = s;
@@ -930,7 +931,7 @@ decode_string(mio_data_t *data, const char *s, VALUE array)
   char *dend = &data->message_buf[MIO_MSG_MAX_ENCODED_VALUE_SIZE];
   size_t decode_len;
 
-  /* assert(*s != '\0' && *s != ',' && *s != ')'); */
+ /* assert(*s != '\0' && *s != ',' && *s != ')'); */
   while (*s && *s != ',' && *s != ')') {
     if (d < dend) {
       *d++ = *s++;
@@ -953,6 +954,76 @@ decode_string(mio_data_t *data, const char *s, VALUE array)
 	     (int)(s0 - data->decode_source));
   }
 }
+#elif 0
+decode_string(mio_data_t *data, const char *s0, VALUE array)
+{
+  char *s = (char *)s0;
+  char *send = s + MIO_MSG_MAX_ENCODED_VALUE_SIZE;
+  size_t decode_len;
+  char c;
+
+  /* assert(*s != '\0' && *s != ',' && *s != ')'); */
+  while (*s && *s != ',' && *s != ')') {
+    if (s < send) {
+      ++s;
+    }
+    else {
+      rb_raise(eDecodeLimitExceeded, "<string> at pos %d is too long "
+	       "for decoding", (int)(s0 - data->decode_source));
+    }
+  }
+  c = *s;
+  *s = '\0';
+
+  decode_len = base64_decode(s0, (unsigned char *)data->value_buf);
+  *s = c;
+  if (decode_len > 0) {
+    rb_ary_push(array, rb_str_new(data->value_buf, (long)decode_len));
+    return s;
+  }
+  else {
+    rb_raise(eParseError, "malformed <string> at pos %d",
+	     (int)(s0 - data->decode_source));
+  }
+}
+#elif 0
+decode_string(mio_data_t *data, const char *s0, VALUE array)
+{
+  char *s = (char *)s0 + 26668;
+  size_t decode_len;
+  char c;
+
+  c = *s;
+  *s = '\0';
+
+  decode_len = base64_decode(s0, (unsigned char *)data->value_buf);
+  *s = c;
+  if (decode_len > 0) {
+    rb_ary_push(array, rb_str_new(data->value_buf, (long)decode_len));
+    return s;
+  }
+  else {
+    rb_raise(eParseError, "malformed <string> at pos %d",
+	     (int)(s0 - data->decode_source));
+  }
+}
+#elif 1
+decode_string(mio_data_t *data, const char *s0, VALUE array)
+{
+  size_t decode_len;
+  const char *s;
+
+  decode_len = base64_decode2(s0, (unsigned char *)data->value_buf, &s);
+  if (decode_len > 0) {
+    rb_ary_push(array, rb_str_new(data->value_buf, (long)decode_len));
+    return s;
+  }
+  else {
+    rb_raise(eParseError, "malformed <string> at pos %d",
+	     (int)(s0 - data->decode_source));
+  }
+}
+#endif
 
 
 static const char *

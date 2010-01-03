@@ -140,6 +140,7 @@ base64_encode(const unsigned char *src, size_t len, char *dst)
 ** multiple lines of 64 printable characters each (except the last, which
 ** may also be terminated with a newline).
 */
+#if 0
 size_t
 base64_decode(const char *src, unsigned char *dst)
 {
@@ -170,6 +171,79 @@ base64_decode(const char *src, unsigned char *dst)
     }
   }
 
+  *dst = '\0';
+  return dst - dst_start;
+}
+#elif 1
+size_t
+base64_decode(const char *src, unsigned char *dst)
+{
+  unsigned char *dst_start = dst;
+  unsigned char v1, v2, v3, v4;
+
+  while (*src != '\0') {
+    v1 = decode_tbl[(unsigned char)*src++];  if (v1 == 64) return 0;
+    v2 = decode_tbl[(unsigned char)*src++];  if (v2 == 64) return 0;
+    *dst++ = (v1 << 2) | (v2 >> 4);
+
+
+    if (*src != '=') {
+      v3 = decode_tbl[(unsigned char)*src++];  if (v3 == 64) return 0;
+      *dst++ = (v2 << 4) | (v3 >> 2);
+
+      if (*src != '=') {
+	v4 = decode_tbl[(unsigned char)*src++];  if (v4 == 64) return 0;
+	*dst++ = (v3 << 6) | v4;
+      }
+      else {   /* 2 bytes: A[6:2], B[4:4], 0[2:_], = */
+	if (src[1] == '\0') break;
+	else return 0;
+      }
+    }
+    else {  /* 1 byte: A[6:2], 0[4:_], == */
+      if (src[1] == '=' && src[2] == '\0') break;
+      else return 0;
+    }
+  }
+
+  *dst = '\0';
+  return dst - dst_start;
+}
+#endif
+
+
+size_t
+base64_decode2(const char *src, unsigned char *dst, const char **src_end)
+{
+  unsigned char *dst_start = dst;
+  unsigned char v1, v2, v3, v4;
+
+  while (*src != '\0' && *src != ',' && *src != ')') {
+    v1 = decode_tbl[(unsigned char)*src++];  if (v1 == 64) return 0;
+    v2 = decode_tbl[(unsigned char)*src++];  if (v2 == 64) return 0;
+    *dst++ = (v1 << 2) | (v2 >> 4);
+
+    if (*src != '=') {
+      v3 = decode_tbl[(unsigned char)*src++];  if (v3 == 64) return 0;
+      *dst++ = (v2 << 4) | (v3 >> 2);
+
+      if (*src != '=') {
+	v4 = decode_tbl[(unsigned char)*src++];  if (v4 == 64) return 0;
+	*dst++ = (v3 << 6) | v4;
+      }
+      else {   /* 2 bytes: A[6:2], B[4:4], 0[2:_], = */
+	if (src[1] == '\0' || src[1] == ',' || src[1] == ')') { ++src; break; }
+	else return 0;
+      }
+    }
+    else {  /* 1 byte: A[6:2], 0[4:_], == */
+      if (src[1] == '=' && (src[2] == '\0' || src[2] == ',' || src[2] == ')'))
+        { src += 2; break; }
+      else return 0;
+    }
+  }
+
+  *src_end = src;
   *dst = '\0';
   return dst - dst_start;
 }
