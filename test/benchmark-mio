@@ -141,8 +141,10 @@ def bm_int_conversions(m, n, value, descr)
     ratio "sprintf", stms, "b64", btms
 
     puts
-    printf "b64:     %.5f us per conversion\n", (1.0e6 * btms.real).quo(n)
-    printf "sprintf: %.5f us per conversion\n", (1.0e6 * stms.real).quo(n)
+    printf "b64:     %.5f us per conversion; %.0f/sec\n",
+      (1.0e6 * btms.real).quo(n), n.quo(btms.real).round
+    printf "sprintf: %.5f us per conversion; %.0f/sec\n",
+      (1.0e6 * stms.real).quo(n), n.quo(stms.real).round
   end
 end
 
@@ -165,8 +167,10 @@ def bm_double_conversions(m, n, value, descr)
     ratio "sprintf", stms, "base64", btms
 
     puts
-    printf "base64:  %.5f us per conversion\n", (1.0e6 * btms.real).quo(n)
-    printf "sprintf: %.5f us per conversion\n", (1.0e6 * stms.real).quo(n)
+    printf "base64:  %.5f us per conversion; %.0f/sec\n",
+      (1.0e6 * btms.real).quo(n), n.quo(btms.real).round
+    printf "sprintf: %.5f us per conversion; %.0f/sec\n",
+      (1.0e6 * stms.real).quo(n), n.quo(stms.real).round
   end
 end
 
@@ -212,20 +216,20 @@ def bm_encode(m, n, tuple, descr)
     end
   end
 
+  if $options.yaml
+    ytms = times.shift
+    nytms = times.shift
+  end
+
+  mtms = times.shift
+  nmtms = times.shift
+
+  if $options.bert
+    btms = times.shift
+    nbtms = times.shift
+  end
+
   if $options.yaml || $options.bert
-    if $options.yaml
-      ytms = times.shift
-      nytms = times.shift
-    end
-
-    mtms = times.shift
-    nmtms = times.shift
-
-    if $options.bert
-      btms = times.shift
-      nbtms = times.shift
-    end
-
     puts
     ratio "YAML", ytms, "MIO", mtms if $options.yaml
     ratio "BERT", btms, "MIO", mtms if $options.bert
@@ -234,6 +238,14 @@ def bm_encode(m, n, tuple, descr)
     ratio "BERT proper", btms - nbtms,
       "MIO proper", mtms - nmtms if $options.bert
   end
+
+  puts
+  printf "YAML:  %.3f us per conversion; %.0f/sec\n",
+    (1.0e6 * ytms.real).quo(n), n.quo(ytms.real).round if $options.yaml
+  printf "MIO :  %.3f us per conversion; %.0f/sec\n",
+    (1.0e6 * mtms.real).quo(n), n.quo(mtms.real).round
+  printf "BERT:  %.3f us per conversion; %.0f/sec\n",
+    (1.0e6 * btms.real).quo(n), n.quo(btms.real).round if $options.bert
 
   puts
   printf "YAML %d bytes\n", ylen if $options.yaml
@@ -283,21 +295,23 @@ def bm_decode(m, n, tuple, descr)
     end
   end
 
+  ytms = times.shift if $options.yaml
+  mtms = times.shift
+  btms = times.shift if $options.bert
+    
   if $options.yaml || $options.bert
-    if $options.yaml
-      ytms = times.shift
-    end
-
-    mtms = times.shift
-
-    if $options.bert
-      btms = times.shift
-    end
-
     puts
     ratio "YAML", ytms, "MIO", mtms if $options.yaml
     ratio "BERT", btms, "MIO", mtms if $options.bert
   end
+
+  puts
+  printf "YAML:  %.3f us per conversion; %.0f/sec\n",
+    (1.0e6 * ytms.real).quo(n), n.quo(ytms.real).round if $options.yaml
+  printf "MIO :  %.3f us per conversion; %.0f/sec\n",
+    (1.0e6 * mtms.real).quo(n), n.quo(mtms.real).round
+  printf "BERT:  %.3f us per conversion; %.0f/sec\n",
+    (1.0e6 * btms.real).quo(n), n.quo(btms.real).round if $options.bert
 
   puts
   printf "YAML %d bytes\n", ylen if $options.yaml
