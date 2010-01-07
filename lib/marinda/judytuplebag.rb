@@ -20,8 +20,8 @@
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
 #############################################################################
 
-require 'yaml'
 require 'judy'
+require 'mioext'
 
 module Marinda
 
@@ -52,8 +52,8 @@ class JudyTupleBag
   def checkpoint_state(txn, checkpoint_id, port)
     txn.prepare("INSERT INTO RegionTuples VALUES(?, ?, ?, ?)") do |insert_stmt|
       @tuples.each do |tuple|
-        tuple_yaml = YAML.dump tuple
-        insert_stmt.execute checkpoint_id, port, tuple.seqnum, tuple_yaml
+        tuple_mio = MIO.encode tuple
+        insert_stmt.execute checkpoint_id, port, tuple.seqnum, tuple_mio
       end
     end
   end
@@ -65,7 +65,7 @@ class JudyTupleBag
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, port) do |row|
-      tuple = YAML.load row[0]
+      tuple = MIO.decode row[0]
       @tuples[tuple.seqnum] = tuple
     end
   end

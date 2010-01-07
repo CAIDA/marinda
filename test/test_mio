@@ -82,19 +82,14 @@ class TestMIO < Test::Unit::TestCase
 
   # ------------------------------------------------------------------------
 
-  def setup
-    @m = Marinda::MIO.new unless @m
-  end
-
-
   def test_coding_arguments
-    assert_raises(ArgumentError) { @m.encode nil }
-    assert_raises(TypeError) { @m.encode 5 }
-    assert_raises(TypeError) { @m.encode self }
+    assert_raises(ArgumentError) { MIO.encode nil }
+    assert_raises(TypeError) { MIO.encode 5 }
+    assert_raises(TypeError) { MIO.encode self }
 
-    assert_raises(TypeError) { @m.decode nil }
-    assert_raises(TypeError) { @m.decode 5 }
-    assert_raises(TypeError) { @m.decode self }
+    assert_raises(TypeError) { MIO.decode nil }
+    assert_raises(TypeError) { MIO.decode 5 }
+    assert_raises(TypeError) { MIO.decode self }
   end
 
 
@@ -163,8 +158,8 @@ class TestMIO < Test::Unit::TestCase
 
     values.each do |encoded, decoded|
       printf "%p == %p\n", encoded, decoded if $options.verbose
-      assert_equal(encoded, @m.encode(decoded))
-      assert_equal(decoded, @m.decode(encoded))
+      assert_equal(encoded, MIO.encode(decoded))
+      assert_equal(decoded, MIO.decode(encoded))
     end
 
     puts if $options.verbose
@@ -172,8 +167,8 @@ class TestMIO < Test::Unit::TestCase
       x = rand()  # [0.0, 1.0)
       s = "." + [[x].pack("G")].pack("m").gsub!(/\=\n/, "")
       printf "%f => %s\n", x, s if $options.verbose
-      assert_equal(s, @m.encode([x]))
-      assert_equal([x], @m.decode(s))
+      assert_equal(s, MIO.encode([x]))
+      assert_equal([x], MIO.decode(s))
     end
   end
 
@@ -184,18 +179,18 @@ class TestMIO < Test::Unit::TestCase
 
     1000.times do
       n = rand(2**32) - 2**31  # => [-2**31, 2**31-1]
-      s = @m.encode [n]
+      s = MIO.encode [n]
       printf "\n%d => %s\n", n, s if $options.verbose
       check_b64_encoding s, n
-      assert_equal([n], @m.decode(s))
+      assert_equal([n], MIO.decode(s))
     end
 
     1000.times do
       n = rand(2**64) - 2**63  # => [-2**63, 2**63-1]
-      s = @m.encode [n]
+      s = MIO.encode [n]
       printf "\n%d => %s\n", n, s if $options.verbose
       check_b64_encoding s, n
-      assert_equal([n], @m.decode(s))
+      assert_equal([n], MIO.decode(s))
     end
   end
 
@@ -212,8 +207,8 @@ class TestMIO < Test::Unit::TestCase
 
     values.each do |encoded, decoded|
       printf "%p == %p\n", encoded, decoded if $options.verbose
-      assert_equal(encoded, @m.encode(decoded))
-      assert_equal(decoded, @m.decode(encoded))
+      assert_equal(encoded, MIO.encode(decoded))
+      assert_equal(decoded, MIO.decode(encoded))
     end
   end
 
@@ -240,8 +235,8 @@ class TestMIO < Test::Unit::TestCase
 
     values.each do |encoded, decoded|
       printf "%p == %p\n", encoded, decoded if $options.verbose
-      assert_equal(encoded, @m.encode(decoded))
-      assert_equal(decoded, @m.decode(encoded))
+      assert_equal(encoded, MIO.encode(decoded))
+      assert_equal(decoded, MIO.decode(encoded))
     end
   end
 
@@ -269,8 +264,8 @@ class TestMIO < Test::Unit::TestCase
 
     values.each do |encoded, decoded|
       printf "%p == %p\n", encoded, decoded if $options.verbose
-      assert_equal(encoded, @m.encode(decoded))
-      assert_equal(decoded, @m.decode(encoded))
+      assert_equal(encoded, MIO.encode(decoded))
+      assert_equal(decoded, MIO.decode(encoded))
     end
   end
 
@@ -291,38 +286,38 @@ class TestMIO < Test::Unit::TestCase
 
     values.each do |encoded, decoded|
       printf "%p == %p\n", encoded, decoded if $options.verbose
-      assert_equal(encoded, @m.encode(decoded))
-      assert_equal(decoded, @m.decode(encoded))
+      assert_equal(encoded, MIO.encode(decoded))
+      assert_equal(decoded, MIO.decode(encoded))
     end
   end
 
 
   def test_encode_limits
-    max_str = "X" * Marinda::MIO::MAX_RAW_VALUE_SIZE
+    max_str = "X" * MIO::MAX_RAW_VALUE_SIZE
 
     size = 0
     big_tuple = []
-    while size < Marinda::MIO::MAX_MESSAGE_SIZE
+    while size < MIO::MAX_MESSAGE_SIZE
       big_tuple << max_str
-      size += Marinda::MIO::MAX_RAW_VALUE_SIZE
+      size += MIO::MAX_RAW_VALUE_SIZE
     end
 
     level = 0
     deep_tuple = []
-    while level < Marinda::MIO::MAX_NESTING
+    while level < MIO::MAX_NESTING
       deep_tuple = [ deep_tuple ]
       level += 1
     end
 
-    assert_nothing_raised(RuntimeError) { @m.encode [max_str] }
-    assert_raises(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode [max_str + "!"] }
-    assert_raises(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode big_tuple }
-    assert_nothing_raised(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode deep_tuple }
-    assert_raises(Marinda::MIO::EncodeLimitExceeded) {
-      @m.encode [deep_tuple] }
+    assert_nothing_raised(RuntimeError) { MIO.encode [max_str] }
+    assert_raises(MIO::EncodeLimitExceeded) {
+      MIO.encode [max_str + "!"] }
+    assert_raises(MIO::EncodeLimitExceeded) {
+      MIO.encode big_tuple }
+    assert_nothing_raised(MIO::EncodeLimitExceeded) {
+      MIO.encode deep_tuple }
+    assert_raises(MIO::EncodeLimitExceeded) {
+      MIO.encode [deep_tuple] }
   end
 
 end

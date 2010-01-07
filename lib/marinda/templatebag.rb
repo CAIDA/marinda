@@ -20,6 +20,7 @@
 ## along with Marinda.  If not, see <http://www.gnu.org/licenses/>.
 #############################################################################
 
+require 'mioext'
 require 'marinda/list'
 
 module Marinda
@@ -87,9 +88,9 @@ class TemplateBag
       (@read_requests.to_a + @consume_requests.to_a).each do |request|
         seqnum += 1
         session_id = request.channel.session_id
-        template_yaml = YAML.dump request.template
+        template_mio = MIO.encode request.template
         insert_stmt.execute checkpoint_id, port, seqnum, session_id,
-          request.operation, template_yaml
+          request.operation, template_mio
       end
     end
   end
@@ -106,9 +107,9 @@ class TemplateBag
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, port) do |row|
-      session_id, operation_str, template_yaml = row
+      session_id, operation_str, template_mio = row
       operation = operation_str.to_sym
-      template = YAML.load template_yaml
+      template = MIO.decode template_mio
       context = sessions[session_id]
       unless context
         $log.err "TemplateBag#restore_state: no Context found for " +

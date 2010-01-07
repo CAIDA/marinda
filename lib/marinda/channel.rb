@@ -31,10 +31,10 @@
 #############################################################################
 
 require 'ostruct'
-require 'yaml'
 require 'thread'
 require 'socket'
 
+require 'mioext'
 require 'marinda/msgcodes'
 require 'marinda/flagsets'
 require 'marinda/port'
@@ -566,7 +566,7 @@ class Channel
       return payload.unpack("CCa*")
 
     when WRITE_CMD, REPLY_CMD
-      values = YAML.load payload[1 ... payload.length]
+      values = MIO.decode payload[1 ... payload.length]
       return [ code, Tuple.new(@private_port, values) ]
 
     when REMEMBER_CMD, CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
@@ -579,7 +579,7 @@ class Channel
     when WRITE_TO_CMD, FORWARD_TO_CMD, PASS_ACCESS_TO_CMD
       peer = payload[1..4].unpack("N").first
       port = (code == FORWARD_TO_CMD ? @peer_port : @private_port)
-      values = YAML.load payload[5 ... payload.length]
+      values = MIO.decode payload[5 ... payload.length]
       retval = [ code, peer, Tuple.new(port, values) ]
       retval << fd if code == PASS_ACCESS_TO_CMD
       return retval
@@ -587,7 +587,7 @@ class Channel
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, TAKE_PRIV_CMD,
 	TAKEP_PRIV_CMD, READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
         MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
-      values = YAML.load payload[1 ... payload.length]
+      values = MIO.decode payload[1 ... payload.length]
       template = Template.new @private_port, values
       template.reqnum = reqnum
       return [ code, template ]
@@ -619,11 +619,11 @@ class Channel
     when tuple && tuple.access_fd
       @peer_port = tuple.sender
       send_with_fd reqnum, tuple.access_fd,
-	"Ca*", TUPLE_WITH_RIGHTS_RESP, YAML.dump(tuple.values)
+	"Ca*", TUPLE_WITH_RIGHTS_RESP, MIO.encode(tuple.values)
       tuple.access_fd = nil
     when tuple
       @peer_port = tuple.sender
-      send reqnum, "Ca*", TUPLE_RESP, YAML.dump(tuple.values)
+      send reqnum, "Ca*", TUPLE_RESP, MIO.encode(tuple.values)
     else
       send reqnum, "C", TUPLE_NIL_RESP
     end
