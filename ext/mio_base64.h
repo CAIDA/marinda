@@ -25,5 +25,7 @@
 
 size_t base64_encode(const unsigned char *src, size_t len, char *dst);
 size_t base64_decode(const char *src, unsigned char *dst);
+size_t base64_decode2(const char *src, unsigned char *dst,
+		      const char **src_end);
 
 #endif /* __MIO_BASE64_H__ */

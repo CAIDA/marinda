@@ -125,6 +125,8 @@ static VALUE eDecodeError, eDecodeLimitExceeded, eParseError;
 static const char *
 decode_array(mio_data_t *data, int level, const char *s, VALUE array);
 
+NORETURN(static void fail_message_length());
+
 /*=========================================================================*/
 
 static void
@@ -802,7 +804,7 @@ decode_b64_bignum(mio_data_t *data, const char *s, VALUE array, int sign,
   int d;            /* numeric value of the current b64 digit */
 
   while (*s && *s != ',' && *s != ')') {
-    d = base64_decode_tbl[*s];
+    d = base64_decode_tbl[(int)*s];
     if (d < 64) {
       if (b64_len < MIO_MAX_64BIT_FIXNUM_B64_LEN) {
 	++b64_len;
@@ -887,7 +889,7 @@ decode_b64_int(mio_data_t *data, const char *s, VALUE array, int sign)
   int d;            /* numeric value of the current b64 digit */
 
   while (*s && *s != ',' && *s != ')') {
-    d = base64_decode_tbl[*s];
+    d = base64_decode_tbl[(int)*s];
     if (d < 64) {
       if (b64_len < MIO_MAX_FIXNUM_B64_LEN) {
 	++b64_len;
