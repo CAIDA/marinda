@@ -28,6 +28,7 @@
 
 $: << "."
 $: << "../lib"
+$: << "../ext"
 
 require 'socket'
 require 'ostruct'

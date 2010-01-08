@@ -28,6 +28,7 @@
 
 $: << "."
 $: << "../lib"
+$: << "../ext"
 
 require 'thread'
 require 'socket'
