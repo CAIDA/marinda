@@ -177,12 +177,41 @@ end
 
 #----------------------------------------------------------------------------
 
-def bm_encode(m, n, tuple, descr)
+def bm_noop_class_vs_instance(n)
+  n *= $options.scale
+  puts "\n::: noop #{n} iterations :::"
+
+  m = MIO.new
+
+  puts
+  times = Benchmark.bmbm do |bm|
+    bm.report("MIO class (noop)") do
+      n.times do MIO.noop 0 end
+    end
+
+    bm.report("MIO instance (noop)") do
+      n.times do m.noop 0 end
+    end
+  end
+
+  ctms = times.shift
+  itms = times.shift
+
+  puts
+  ratio "class", ctms, "instance", itms
+  printf "class:     %.5f us per call\n", (1.0e6 * ctms.real).quo(n)
+  printf "instance:  %.5f us per call\n", (1.0e6 * itms.real).quo(n)
+end
+
+
+#----------------------------------------------------------------------------
+
+def bm_encode(n, tuple, descr)
   n *= $options.scale
   puts "\n::: encoding #{n} tuples (#{descr}) :::"
 
   ylen = YAML.dump(tuple).length if $options.yaml
-  mlen = m.encode(tuple).length
+  mlen = MIO.encode(tuple).length
   blen = BERT.encode(tuple).length if $options.bert
 
   puts
@@ -193,16 +222,16 @@ def bm_encode(m, n, tuple, descr)
       end
 
       bm.report("YAML-noop") do
-        n.times do m.encode_noop ylen end
+        n.times do MIO.encode_noop ylen end
       end
     end
 
     bm.report("MIO") do
-      n.times do m.encode tuple end
+      n.times do MIO.encode tuple end
     end
 
     bm.report("MIO-noop") do
-      n.times do m.encode_noop mlen end
+      n.times do MIO.encode_noop mlen end
     end
 
     if $options.bert
@@ -211,7 +240,7 @@ def bm_encode(m, n, tuple, descr)
       end
 
       bm.report("BERT-noop") do
-        n.times do m.encode_noop blen end
+        n.times do MIO.encode_noop blen end
       end
     end
   end
@@ -259,7 +288,7 @@ end
 
 #----------------------------------------------------------------------------
 
-def bm_decode(m, n, tuple, descr)
+def bm_decode(n, tuple, descr)
   n *= $options.scale
   puts "\n::: decoding #{n} tuples (#{descr}) :::"
 
@@ -268,7 +297,7 @@ def bm_decode(m, n, tuple, descr)
     ylen = yen.length
   end
 
-  men = m.encode(tuple)
+  men = MIO.encode(tuple)
   mlen = men.length
 
   if $options.bert
@@ -285,7 +314,7 @@ def bm_decode(m, n, tuple, descr)
     end
 
     bm.report("MIO") do
-      n.times do m.decode men end
+      n.times do MIO.decode men end
     end
 
     if $options.bert
@@ -325,9 +354,9 @@ end
 
 #----------------------------------------------------------------------------
 
-def bm_coding(m, n, tuple, descr)
-  bm_encode m, n, tuple, descr if $options.encode
-  bm_decode m, n, tuple, descr if $options.decode
+def bm_coding(n, tuple, descr)
+  bm_encode n, tuple, descr if $options.encode
+  bm_decode n, tuple, descr if $options.decode
 end
 
 
@@ -338,7 +367,7 @@ end
 puts "# " + $command_line
 puts "# " + Time.now.to_s
 
-m = Marinda::MIO.new
+m = MIO.new
 
 if $options.convert
   bm_double_conversions m, 1_000_000, 1.0, "1.0"
@@ -357,42 +386,44 @@ if $options.convert
   bm_int_conversions m, 1_000_000, -2**63, "min 64-bit bignum or fixnum"
 end
 
-bm_coding m, 50000, [], "empty"
+bm_noop_class_vs_instance 500000
 
-bm_coding m, 25000, [1,2,3,4,5], "5 small fixnums"
+bm_coding 50000, [], "empty"
 
-bm_coding m, 25000, [2**30-1,2**30-2,2**30-3,2**30-4,2**30-5], "5 large fixnums"
+bm_coding 25000, [1,2,3,4,5], "5 small fixnums"
 
-bm_coding m, 25000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891], "5 floats"
+bm_coding 25000, [2**30-1,2**30-2,2**30-3,2**30-4,2**30-5], "5 large fixnums"
 
-bm_coding m, 10000, (1..25).to_a, "25 small fixnums"
+bm_coding 25000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891], "5 floats"
 
-bm_coding m, 10000, (1..25).to_a.map{|n| 2**30-n}, "25 large fixnums"
+bm_coding 10000, (1..25).to_a, "25 small fixnums"
 
-bm_coding m, 10000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891] * 5, "25 floats"
+bm_coding 10000, (1..25).to_a.map{|n| 2**30-n}, "25 large fixnums"
 
-bm_coding m, 200, (1..1000).to_a, "1000 small fixnums"
+bm_coding 10000, [1.1234567891,2.1234567891,3.1234567891,4.1234567891,5.1234567891] * 5, "25 floats"
 
-bm_coding m, 200, (1..1000).to_a.map{|n| 2**30-n}, "1000 large fixnums"
+bm_coding 200, (1..1000).to_a, "1000 small fixnums"
+
+bm_coding 200, (1..1000).to_a.map{|n| 2**30-n}, "1000 large fixnums"
 
 s = gen_string 26
-bm_coding m, 50000, [s], "1 string of 26 bytes"
+bm_coding 50000, [s], "1 string of 26 bytes"
 
 s = gen_string 1024
-bm_coding m, 50000, [s], "1 string of 1024 bytes"
+bm_coding 50000, [s], "1 string of 1024 bytes"
 
 s = gen_string 20000
-bm_coding m, 5000, [s], "1 string of 20000 bytes"
+bm_coding 5000, [s], "1 string of 20000 bytes"
 
 a = []
 10.times do a << gen_string(26) end
-bm_coding m, 10000, a, "10 strings of 26 bytes each"
+bm_coding 10000, a, "10 strings of 26 bytes each"
 
 90.times do a << gen_string(26) end
-bm_coding m, 1000, a, "100 strings of 26 bytes each"
+bm_coding 1000, a, "100 strings of 26 bytes each"
 
 900.times do a << gen_string(26) end
-bm_coding m, 100, a, "1000 strings of 26 bytes each"
+bm_coding 100, a, "1000 strings of 26 bytes each"
 
 tuples = [
           [["foo", "bar"], ""],
@@ -414,7 +445,7 @@ tuples = [
           [[2**30-1, 2**30-2, 2**30-3], [[2**30-4]], [[[2**30-5, 2**30-6]]], [[[["foo"]]]]]
 ]
 tuples.each do |t|
-  bm_coding m, 15000, t, t.inspect
+  bm_coding 15000, t, t.inspect
 end
 
 puts "\n\n### DONE."

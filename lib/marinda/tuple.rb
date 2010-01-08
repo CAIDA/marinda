@@ -74,6 +74,15 @@ class Tuple
   attr_accessor :seqnum, :flags, :sender, :forwarder, :access_fd
   attr_reader :values
 
+  def self.from_mio(s)
+    # 0:seqnum   1:flags   2:sender   3:forwarder   4:values
+    v =  MIO.decode s
+    retval = Tuple.new v[2], v[4]
+    retval.seqnum = v[0]
+    retval.flags = v[1]
+    retval.forwarder = v[3]
+  end
+
   def initialize(sender, values)
     @seqnum = nil
     @flags = 0
@@ -94,6 +103,10 @@ class Tuple
     %w{ @seqnum @flags @sender @forwarder @values }  # No @access_fd.
   end
 
+  def to_mio  # XXX store version info?
+    MIO.encode [ @seqnum, @flags, @sender, @forwarder, @values ]
+  end
+
   def to_s
     "Marinda::Tuple[" + @values.map { |v| v || "nil" }.join(", ") + "]"
   end
@@ -102,16 +115,22 @@ end
 
 
 # conceptual template structure:
-#  [ flags{8}, sender{64}, value_1, value_2, ... ]
+#  [ sender{64}, value_1, value_2, ... ]
 
 class Template
 
   attr_accessor :reqnum
-  attr_reader :flags, :sender, :values
+  attr_reader :sender, :values
+
+  def self.from_mio(s)
+    # 0:reqnum   1:sender   2:values
+    v =  MIO.decode s
+    retval = Tuple.new v[1], v[2]
+    retval.reqnum = v[0]
+  end
 
   def initialize(sender, values)
     @reqnum = nil
-    @flags = 0
     @sender = sender
     @values = values
   end
@@ -128,13 +147,17 @@ class Template
   end
 
   def inspect
-    sprintf "#<Marinda::Template:%#x @reqnum=%p @flags=0b%b, @sender=%#x, " +
-      "@values=[%s]>", object_id, @reqnum, @flags, @sender,
+    sprintf "#<Marinda::Template:%#x @reqnum=%p @sender=%#x, " +
+      "@values=[%s]>", object_id, @reqnum, @sender,
       @values.map { |v| v.inspect }.join(", ")
   end
 
   def to_yaml_properties
-    %w{ @reqnum @flags @sender @values }
+    %w{ @reqnum @sender @values }
+  end
+
+  def to_mio  # XXX store version info?
+    MIO.encode [ @reqnum, @sender, @values ]
   end
 
   def to_s

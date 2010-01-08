@@ -26,8 +26,8 @@
 #############################################################################
 
 require 'socket'
-require 'yaml'
 
+require 'mioext'
 require 'marinda/msgcodes'
 require 'marinda/flagsets'
 require 'marinda/version'
@@ -275,7 +275,7 @@ class Client
       raise OperationError, "#{error[1]}: #{error[2]}"
 
     when TUPLE_RESP, TUPLE_WITH_RIGHTS_RESP
-      tuple = YAML.load payload[1 ... payload.length]
+      tuple = MIO.decode payload[1 ... payload.length]
       tuple << file if file
       return [ code, tuple ]
 
@@ -413,7 +413,7 @@ class Client
   def write(tuple)
     raise ClientError if @active_command
     raise PrivilegeError unless can_write?
-    send "Ca*", WRITE_CMD, YAML.dump(tuple)
+    send "Ca*", WRITE_CMD, MIO.encode(tuple)
     receive_ack
     true
   end
@@ -422,7 +422,7 @@ class Client
   def reply(tuple)
     raise ClientError if @active_command
     raise PrivilegeError unless can_write?
-    send "Ca*", REPLY_CMD, YAML.dump(tuple)
+    send "Ca*", REPLY_CMD, MIO.encode(tuple)
     receive_ack
     true
   end
@@ -446,7 +446,7 @@ class Client
   def write_to(peer, tuple)
     raise ClientError if @active_command
     raise PrivilegeError unless can_write?
-    send "CNa*", WRITE_TO_CMD, peer, YAML.dump(tuple)
+    send "CNa*", WRITE_TO_CMD, peer, MIO.encode(tuple)
     receive_ack
     true
   end
@@ -455,7 +455,7 @@ class Client
   def forward_to(peer, tuple)
     raise ClientError if @active_command
     raise PrivilegeError unless can_write? and can_forward?
-    send "CNa*", FORWARD_TO_CMD, peer, YAML.dump(tuple)
+    send "CNa*", FORWARD_TO_CMD, peer, MIO.encode(tuple)
     receive_ack
     true
   end
@@ -465,7 +465,7 @@ class Client
     raise ClientError if @active_command
     fail "attempt to pass access rights in global tuple space" if is_global?
     raise PrivilegeError unless can_write? and can_pass_access?
-    send "CNa*", PASS_ACCESS_TO_CMD, peer, YAML.dump(tuple)
+    send "CNa*", PASS_ACCESS_TO_CMD, peer, MIO.encode(tuple)
     file = file.fileno if file.kind_of? IO
     sock_send_io file
     receive_ack
@@ -476,7 +476,7 @@ class Client
   def read(template)
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", READ_CMD, YAML.dump(template)
+    send "Ca*", READ_CMD, MIO.encode(template)
     receive_tuple
   end
 
@@ -484,7 +484,7 @@ class Client
   def readp(template)
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", READP_CMD, YAML.dump(template)
+    send "Ca*", READP_CMD, MIO.encode(template)
     receive_tuple
   end
 
@@ -492,7 +492,7 @@ class Client
   def take(template)
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", TAKE_CMD, YAML.dump(template)
+    send "Ca*", TAKE_CMD, MIO.encode(template)
     receive_tuple
   end
 
@@ -500,21 +500,21 @@ class Client
   def takep(template)
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", TAKEP_CMD, YAML.dump(template)
+    send "Ca*", TAKEP_CMD, MIO.encode(template)
     receive_tuple
   end
 
 
   def take_priv(template)
     raise ClientError if @active_command
-    send "Ca*", TAKE_PRIV_CMD, YAML.dump(template)
+    send "Ca*", TAKE_PRIV_CMD, MIO.encode(template)
     receive_tuple
   end
 
 
   def takep_priv(template)
     raise ClientError if @active_command
-    send "Ca*", TAKEP_PRIV_CMD, YAML.dump(template)
+    send "Ca*", TAKEP_PRIV_CMD, MIO.encode(template)
     receive_tuple
   end
 
@@ -524,7 +524,7 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
     @active_command = READ_ALL_CMD
-    send "Ca*", READ_ALL_CMD, YAML.dump(template)
+    send "Ca*", READ_ALL_CMD, MIO.encode(template)
     execute_iteration true, block
   end
 
@@ -534,7 +534,7 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     @active_command = TAKE_ALL_CMD
-    send "Ca*", TAKE_ALL_CMD, YAML.dump(template)
+    send "Ca*", TAKE_ALL_CMD, MIO.encode(template)
     execute_iteration true, block
   end
 
@@ -544,7 +544,7 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
     @active_command = MONITOR_CMD
-    send "Ca*", MONITOR_CMD, YAML.dump(template)
+    send "Ca*", MONITOR_CMD, MIO.encode(template)
     execute_iteration true, block
   end
 
@@ -554,7 +554,7 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     @active_command = CONSUME_CMD
-    send "Ca*", CONSUME_CMD, YAML.dump(template)
+    send "Ca*", CONSUME_CMD, MIO.encode(template)
     execute_iteration true, block
   end
 
@@ -564,7 +564,7 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
     @active_command = MONITOR_STREAM_CMD
-    send "Ca*", MONITOR_STREAM_CMD, YAML.dump(template)
+    send "Ca*", MONITOR_STREAM_CMD, MIO.encode(template)
     execute_iteration false, block
   end
 
@@ -574,7 +574,7 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     @active_command = CONSUME_STREAM_CMD
-    send "Ca*", CONSUME_STREAM_CMD, YAML.dump(template)
+    send "Ca*", CONSUME_STREAM_CMD, MIO.encode(template)
     execute_iteration false, block
   end
 
@@ -645,7 +645,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", READ_CMD, YAML.dump(template)
+    send "Ca*", READ_CMD, MIO.encode(template)
     @active_command = @dispatch[READ_CMD]
     @async_callback = block
   end
@@ -655,7 +655,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", READP_CMD, YAML.dump(template)
+    send "Ca*", READP_CMD, MIO.encode(template)
     @active_command = @dispatch[READP_CMD]
     @async_callback = block
   end
@@ -665,7 +665,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", TAKE_CMD, YAML.dump(template)
+    send "Ca*", TAKE_CMD, MIO.encode(template)
     @active_command = @dispatch[TAKE_CMD]
     @async_callback = block
   end
@@ -675,7 +675,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", TAKEP_CMD, YAML.dump(template)
+    send "Ca*", TAKEP_CMD, MIO.encode(template)
     @active_command = @dispatch[TAKEP_CMD]
     @async_callback = block
   end
@@ -684,7 +684,7 @@ class Client
   def take_priv_async(template, &block)
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
-    send "Ca*", TAKE_PRIV_CMD, YAML.dump(template)
+    send "Ca*", TAKE_PRIV_CMD, MIO.encode(template)
     @active_command = @dispatch[TAKE_PRIV_CMD]
     @async_callback = block
   end
@@ -693,7 +693,7 @@ class Client
   def takep_priv_async(template, &block)
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
-    send "Ca*", TAKEP_PRIV_CMD, YAML.dump(template)
+    send "Ca*", TAKEP_PRIV_CMD, MIO.encode(template)
     @active_command = @dispatch[TAKEP_PRIV_CMD]
     @async_callback = block
   end
@@ -703,7 +703,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", READ_ALL_CMD, YAML.dump(template)
+    send "Ca*", READ_ALL_CMD, MIO.encode(template)
     @active_command = @dispatch[READ_ALL_CMD]
     @async_callback = block
   end
@@ -713,7 +713,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", TAKE_ALL_CMD, YAML.dump(template)
+    send "Ca*", TAKE_ALL_CMD, MIO.encode(template)
     @active_command = @dispatch[TAKE_ALL_CMD]
     @async_callback = block
   end
@@ -723,7 +723,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", MONITOR_CMD, YAML.dump(template)
+    send "Ca*", MONITOR_CMD, MIO.encode(template)
     @active_command = @dispatch[MONITOR_CMD]
     @async_callback = block
   end
@@ -733,7 +733,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", CONSUME_CMD, YAML.dump(template)
+    send "Ca*", CONSUME_CMD, MIO.encode(template)
     @active_command = @dispatch[CONSUME_CMD]
     @async_callback = block
   end
@@ -743,7 +743,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_read?
-    send "Ca*", MONITOR_STREAM_CMD, YAML.dump(template)
+    send "Ca*", MONITOR_STREAM_CMD, MIO.encode(template)
     @active_command = @dispatch[MONITOR_STREAM_CMD]
     @async_callback = block
   end
@@ -753,7 +753,7 @@ class Client
     raise ArgumentError, "missing block" unless block
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
-    send "Ca*", CONSUME_STREAM_CMD, YAML.dump(template)
+    send "Ca*", CONSUME_STREAM_CMD, MIO.encode(template)
     @active_command = @dispatch[CONSUME_STREAM_CMD]
     @async_callback = block
   end

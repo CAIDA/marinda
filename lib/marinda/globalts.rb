@@ -39,8 +39,8 @@
 #############################################################################
 
 require 'ostruct'
-require 'yaml'
 
+require 'mioext'
 require 'marinda/list'
 require 'marinda/msgcodes'
 require 'marinda/port'
@@ -200,29 +200,62 @@ class GlobalSpace
         |insert_stmt|
         @unacked_messages.each do |message|
           seqnum += 1
-          message_yaml = YAML.dump message
-          insert_stmt.execute checkpoint_id, @session_id, seqnum, message_yaml
+          message_mio = message.to_mio
+          insert_stmt.execute checkpoint_id, @session_id, seqnum, message_mio
         end
       end
 
       txn.prepare("INSERT INTO OngoingRequests VALUES(?, ?, ?, ?, ?)") do
         |insert_stmt|
         @ongoing_requests.each do |command_seqnum, request|
-          template_yaml = YAML.dump request.template
+          template_mio = request.template.to_mio
           insert_stmt.execute checkpoint_id, @session_id, command_seqnum,
-            request.operation, template_yaml
+            request.operation, template_mio
         end
       end
     end
 
   end
 
-  Message = Struct.new :seqnum, :command, :contents
   class Message
-    def to_yaml_properties
-      %w{ @seqnum @command @contents }
+    attr_accessor :seqnum, :command, :contents
+
+    def self.from_mio(s)
+      Message.new *MIO.decode(s)
     end
+
+    def initialize(seqnum, command, contents)
+      @seqnum = seqnum
+      @command = command
+      @contents = contents
+    end
+
+    def to_mio
+      MIO.encode [ @seqnum, @command, @contents ]
+    end
+
   end
+
+  # Old definition modified for use during migration.
+
+#   Message = Struct.new :seqnum, :command, :contents
+#   class Message
+#     def to_yaml_properties
+#       %w{ @seqnum @command @contents }
+#     end
+
+#     def mio_encode
+#       MIO.encode [ seqnum(), command(), contents() ]
+#     end
+
+#     def mio_decode(s)
+#       v = MIO.decode s
+#       self.seqnum = v[0]
+#       self.command = v[1]
+#       self.contents = v[2]
+#       self
+#     end
+#   end
 
   ReadBuffer = Struct.new :length, :payload
 
@@ -316,8 +349,8 @@ class GlobalSpace
       @global_state.db.execute("SELECT * FROM UnackedMessages
                                 WHERE checkpoint_id=?
                                 ORDER BY seqnum", checkpoint_id) do |row|
-        session_id, seqnum, message_yaml = row[1..-1]
-        message = YAML.load message_yaml
+        session_id, seqnum, message_mio = row[1..-1]
+        message = Message.from_mio message_mio
         context = sessions[session_id]
         if context
           context.unacked_messages.push message
@@ -325,7 +358,7 @@ class GlobalSpace
           $log.err "GlobalSpace#restore_state: no Context found for " +
             "session_id=%#x while restoring unacked_messages " +
             "(checkpoint_id=%d, seqnum=%d, message=%p)",
-            session_id, checkpoint_id, seqnum, message_yaml
+            session_id, checkpoint_id, seqnum, message_mio
           exit 1
         end
       end
@@ -808,10 +841,10 @@ class GlobalSpace
   def decode_command(reqnum, command, payload)
     case command
     when WRITE_CMD
-      flags, recipient, sender, forwarder, values_yaml =
+      flags, recipient, sender, forwarder, values_mio =
         payload.unpack("Nwwwa*") 
 
-      values = YAML.load values_yaml
+      values = MIO.decode values_mio
       tuple = Tuple.new sender, values
       tuple.flags = flags
       tuple.forwarder = (forwarder == 0 ? nil : forwarder)
@@ -821,12 +854,12 @@ class GlobalSpace
       MONITOR_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       if command == READ_ALL_CMD || command == TAKE_ALL_CMD ||
           command == MONITOR_CMD || command == CONSUME_CMD
-	recipient, sender, cursor, values_yaml = payload.unpack("wwwa*")
+	recipient, sender, cursor, values_mio = payload.unpack("wwwa*")
       else
-	recipient, sender, values_yaml = payload.unpack("wwa*")
+	recipient, sender, values_mio = payload.unpack("wwa*")
 	cursor = nil
       end
-      values = YAML.load values_yaml
+      values = MIO.decode values_mio
 
       template = Template.new sender, values
       template.reqnum = reqnum
@@ -1113,9 +1146,9 @@ class GlobalSpace
       sender = tuple.sender
       forwarder = (tuple.forwarder || 0)
       seqnum = tuple.seqnum
-      values = YAML.dump tuple.values
+      values_mio = MIO.encode tuple.values
       contents = [ response, command_seqnum, flags, sender, forwarder,
-                   seqnum, values ].pack("CwNwwwa*")
+                   seqnum, values_mio ].pack("CwNwwwa*")
     else
       response = TUPLE_NIL_RESP
       contents = [ response, command_seqnum ].pack("Cw")

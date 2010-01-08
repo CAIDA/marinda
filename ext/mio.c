@@ -87,6 +87,8 @@ typedef struct {
   const char *element_start;  /* start of current element being decoded */
 } mio_data_t;
 
+static mio_data_t g_data;  /* used by class encode/decode methods */
+
 static const char base64_encode_tbl[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /*
@@ -116,7 +118,6 @@ static const unsigned char base64_decode_tbl[256] =
   64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
 };
 
-static VALUE mMarinda;
 static VALUE cMIO;
 static VALUE eEncodeError, eEncodeLimitExceeded;
 static VALUE eDecodeError, eDecodeLimitExceeded, eParseError;
@@ -124,10 +125,12 @@ static VALUE eDecodeError, eDecodeLimitExceeded, eParseError;
 static const char *
 decode_array(mio_data_t *data, int level, const char *s, VALUE array);
 
+NORETURN(static void fail_message_length());
+
 /*=========================================================================*/
 
 static void
-fail_message_length(mio_data_t *data)
+fail_message_length()
 {
   rb_raise(eEncodeLimitExceeded, "message length exceeds max %d",
 	   MIO_MSG_MAX_MESSAGE_SIZE);
@@ -159,6 +162,20 @@ mio_init(VALUE self)
   data = ALLOC(mio_data_t);
   memset(data, 0, sizeof(mio_data_t));
   DATA_PTR(self) = data;
+  return self;
+}
+
+
+static VALUE
+mio_s_noop(VALUE self, VALUE vlength)
+{
+  return self;
+}
+
+
+static VALUE
+mio_noop(VALUE self, VALUE vlength)
+{
   return self;
 }
 
@@ -221,7 +238,7 @@ encode_fixnum(mio_data_t *data, size_t index, VALUE value)
     return d - data->message_buf;
   }
   else {
-    fail_message_length(data);
+    fail_message_length();
   }
 }
 
@@ -258,7 +275,7 @@ encode_bignum(mio_data_t *data, size_t index, VALUE value)
 	return index + 2;
       }
       else {
-	fail_message_length(data);
+	fail_message_length();
       }
     }
     else {
@@ -283,7 +300,7 @@ encode_bignum(mio_data_t *data, size_t index, VALUE value)
     return d - data->message_buf;
   }
   else {
-    fail_message_length(data);
+    fail_message_length();
   }
 }
 #endif
@@ -334,7 +351,7 @@ encode_float(mio_data_t *data, size_t index, VALUE value)
     return index + 12;
   }
   else {
-    fail_message_length(data);
+    fail_message_length();
   }
 }
 
@@ -423,7 +440,7 @@ encode_array(mio_data_t *data, int level, size_t index, VALUE tuple)
 	  l = 1;
 	}
 	else {
-	  fail_message_length(data);
+	  fail_message_length();
 	}
       }
       else {
@@ -477,7 +494,7 @@ encode_array(mio_data_t *data, int level, size_t index, VALUE tuple)
 	data->message_buf[index] = '\0';
       }
       else {
-	fail_message_length(data);
+	fail_message_length();
       }
     }
   }
@@ -526,6 +543,41 @@ mio_encode(VALUE self, VALUE tuple)
 
 
 /*
+** Returns the encoded string form of the array {tuple}, which may have
+** nested arrays up to the max nesting level.
+**
+** {tuple} may not be nil, though it can be empty.  {tuple} may only
+** contain nils, fixnums, strings, floats, or arrays.  Bignums are
+** supported only if the host has the 'long long' type, and only for
+** bignums that can fit within 'long long'.
+**
+** In case of error (e.g., exceeding the max message size), this raises a
+** Ruby runtime exception.
+*/
+static VALUE
+mio_s_encode(VALUE self, VALUE tuple)
+{
+  if (NIL_P(tuple)) {
+    rb_raise(rb_eArgError, "tuple argument is nil");
+  }
+  else if (TYPE(tuple) == T_ARRAY) {
+    if (RARRAY_LEN(tuple) == 0) {
+      strcpy(g_data.message_buf, "`E"); /* special case: empty top-level */
+    }
+    else {
+      encode_array(&g_data, 0, 0, tuple);
+    }
+    return rb_str_new2(g_data.message_buf);
+  }
+  else {
+    rb_raise(rb_eTypeError, "tuple argument must be an array");
+  }
+
+  return Qnil;  /*NOTREACHED*/
+}
+
+
+/*
 ** Returns an empty string of the specified length for benchmarking purposes.
 ** This can be used to determine the Ruby overhead in wrapping a C function.
 */
@@ -542,6 +594,23 @@ mio_encode_noop(VALUE self, VALUE vlength)
   }
 
   return rb_str_new(data->message_buf, length);
+}
+
+
+/*
+** Returns an empty string of the specified length for benchmarking purposes.
+** This can be used to determine the Ruby overhead in wrapping a C function.
+*/
+static VALUE
+mio_s_encode_noop(VALUE self, VALUE vlength)
+{
+  long length = NUM2ULONG(vlength);
+
+  if (length > MIO_MSG_MAX_MESSAGE_SIZE) {
+    length = MIO_MSG_MAX_MESSAGE_SIZE;
+  }
+
+  return rb_str_new(g_data.message_buf, length);
 }
 
 
@@ -735,7 +804,7 @@ decode_b64_bignum(mio_data_t *data, const char *s, VALUE array, int sign,
   int d;            /* numeric value of the current b64 digit */
 
   while (*s && *s != ',' && *s != ')') {
-    d = base64_decode_tbl[*s];
+    d = base64_decode_tbl[(int)*s];
     if (d < 64) {
       if (b64_len < MIO_MAX_64BIT_FIXNUM_B64_LEN) {
 	++b64_len;
@@ -820,7 +889,7 @@ decode_b64_int(mio_data_t *data, const char *s, VALUE array, int sign)
   int d;            /* numeric value of the current b64 digit */
 
   while (*s && *s != ',' && *s != ')') {
-    d = base64_decode_tbl[*s];
+    d = base64_decode_tbl[(int)*s];
     if (d < 64) {
       if (b64_len < MIO_MAX_FIXNUM_B64_LEN) {
 	++b64_len;
@@ -1201,6 +1270,25 @@ mio_decode(VALUE self, VALUE v)
 }
 
 
+static VALUE
+mio_s_decode(VALUE self, VALUE v)
+{
+  const char *s;
+
+  StringValue(v);
+  g_data.decode_source = s = RSTRING_PTR(v);
+
+  if (*s == '`' && strcmp(s, "`E") == 0) {
+    return rb_ary_new();
+  }
+  else {
+    VALUE retval = rb_ary_new();
+    decode_array(&g_data, 0, s, retval);
+    return retval;
+  }
+}
+
+
 /***************************************************************************/
 /***************************************************************************/
 
@@ -1213,8 +1301,13 @@ Init_mio(void)
   ID private_class_method_ID, private_ID;
   ID dup_ID, clone_ID;
 
+  /* Class method invocation is 18% slower with MIO nested inside Marinda. */
+#if 0
   mMarinda = rb_define_module("Marinda");
   cMIO = rb_define_class_under(mMarinda, "MIO", rb_cObject);
+#else
+  cMIO = rb_define_class("MIO", rb_cObject);
+#endif
 
   eEncodeError = rb_define_class_under(cMIO, "EncodeError", rb_eStandardError);
   eEncodeLimitExceeded = rb_define_class_under(cMIO, "EncodeLimitExceeded",
@@ -1231,6 +1324,10 @@ Init_mio(void)
   DEF_LIMIT(MAX_NESTING);
 
   rb_define_alloc_func(cMIO, mio_alloc);
+  rb_define_singleton_method(cMIO, "encode", mio_s_encode, 1);
+  rb_define_singleton_method(cMIO, "encode_noop", mio_s_encode_noop, 1);
+  rb_define_singleton_method(cMIO, "decode", mio_s_decode, 1);
+  rb_define_singleton_method(cMIO, "noop", mio_s_noop, 1);
 
   rb_define_method(cMIO, "initialize", mio_init, 0);
   rb_define_method(cMIO, "encode", mio_encode, 1);
@@ -1244,6 +1341,7 @@ Init_mio(void)
   rb_define_method(cMIO, "benchmark_decimal_double_encoding",
 		   mio_benchmark_decimal_double_encoding, 2);
   rb_define_method(cMIO, "decode", mio_decode, 1);
+  rb_define_method(cMIO, "noop", mio_noop, 1);
 
   private_class_method_ID = rb_intern("private_class_method");
   private_ID = rb_intern("private");

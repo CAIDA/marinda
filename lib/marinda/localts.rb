@@ -35,8 +35,8 @@
 #############################################################################
 
 require 'ostruct'
-require 'yaml'
 
+require 'mioext'
 require 'marinda/port'
 require 'marinda/region'
 require 'marinda/channel'
