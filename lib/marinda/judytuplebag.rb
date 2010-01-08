@@ -52,8 +52,7 @@ class JudyTupleBag
   def checkpoint_state(txn, checkpoint_id, port)
     txn.prepare("INSERT INTO RegionTuples VALUES(?, ?, ?, ?)") do |insert_stmt|
       @tuples.each do |tuple|
-        tuple_mio = MIO.encode tuple
-        insert_stmt.execute checkpoint_id, port, tuple.seqnum, tuple_mio
+        insert_stmt.execute checkpoint_id, port, tuple.seqnum, tuple.to_mio
       end
     end
   end
@@ -65,8 +64,7 @@ class JudyTupleBag
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, port) do |row|
-      tuple = MIO.decode row[0]
-      @tuples[tuple.seqnum] = tuple
+      @tuples[tuple.seqnum] = Tuple.from_mio(row[0])
     end
   end
 

@@ -200,7 +200,7 @@ class GlobalSpace
         |insert_stmt|
         @unacked_messages.each do |message|
           seqnum += 1
-          message_mio = message.to_mio()
+          message_mio = message.to_mio
           insert_stmt.execute checkpoint_id, @session_id, seqnum, message_mio
         end
       end
@@ -208,7 +208,7 @@ class GlobalSpace
       txn.prepare("INSERT INTO OngoingRequests VALUES(?, ?, ?, ?, ?)") do
         |insert_stmt|
         @ongoing_requests.each do |command_seqnum, request|
-          template_mio = MIO.encode request.template
+          template_mio = request.template.to_mio
           insert_stmt.execute checkpoint_id, @session_id, command_seqnum,
             request.operation, template_mio
         end
@@ -1146,9 +1146,9 @@ class GlobalSpace
       sender = tuple.sender
       forwarder = (tuple.forwarder || 0)
       seqnum = tuple.seqnum
-      values = MIO.encode tuple.values
+      values_mio = MIO.encode tuple.values
       contents = [ response, command_seqnum, flags, sender, forwarder,
-                   seqnum, values ].pack("CwNwwwa*")
+                   seqnum, values_mio ].pack("CwNwwwa*")
     else
       response = TUPLE_NIL_RESP
       contents = [ response, command_seqnum ].pack("Cw")

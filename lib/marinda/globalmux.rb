@@ -371,8 +371,8 @@ class GlobalSpaceMux
     flags = tuple.flags
     sender = tuple.sender
     forwarder = (tuple.forwarder || 0)
-    values = MIO.encode tuple.values
-    contents = [ command, flags, recipient, sender, forwarder, values ].
+    values_mio = MIO.encode tuple.values
+    contents = [ command, flags, recipient, sender, forwarder, values_mio ].
       pack("CNwwwa*")
     enq_message command, contents
   end
@@ -380,11 +380,11 @@ class GlobalSpaceMux
 
   def enq_command(command, recipient, request, cursor=nil)
     sender = request.template.sender
-    values = MIO.encode request.template.values
+    values_mio = MIO.encode request.template.values
     if cursor
-      contents = [ command, recipient, sender, cursor, values].pack("Cwwwa*")
+      contents = [command, recipient, sender, cursor, values_mio].pack("Cwwwa*")
     else
-      contents = [ command, recipient, sender, values ].pack("Cwwa*")
+      contents = [command, recipient, sender, values_mio ].pack("Cwwa*")
     end
     enq_message command, contents, request
   end

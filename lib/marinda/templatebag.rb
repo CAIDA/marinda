@@ -88,7 +88,7 @@ class TemplateBag
       (@read_requests.to_a + @consume_requests.to_a).each do |request|
         seqnum += 1
         session_id = request.channel.session_id
-        template_mio = MIO.encode request.template
+        template_mio = request.template.to_mio
         insert_stmt.execute checkpoint_id, port, seqnum, session_id,
           request.operation, template_mio
       end
@@ -109,7 +109,7 @@ class TemplateBag
                       checkpoint_id, port) do |row|
       session_id, operation_str, template_mio = row
       operation = operation_str.to_sym
-      template = MIO.decode template_mio
+      template = Template.from_mio template_mio
       context = sessions[session_id]
       unless context
         $log.err "TemplateBag#restore_state: no Context found for " +
