@@ -551,18 +551,67 @@ class GlobalSpace
   end
 
 
+  def update_config(config)
+    @config = config
+    RevServerConnection.nodes = @config.nodes
+  end
+
+  public :checkpoint_state, :update_config
+
   # The main event loop, handling new client connections and requests on
   # established client connections.
   #
   # This is called by the marinda-gs script, and any exceptions are caught
   # and reported there.
   def execute_rev
+    @timer = Rev::TimerWatcher.new 5, true
+    class << @timer
+      attr_accessor :space
+
+      def on_timer
+        if $checkpoint_state
+          $checkpoint_state = false
+          $log.info "checkpointing state on SIGUSR1."
+          space.checkpoint_state()
+        end
+
+        if $checkpoint_state_and_exit
+          $checkpoint_state_and_exit = false
+          $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
+          space.checkpoint_state()
+          $log.info "exiting after checkpoint upon request."
+          Rev::Loop.default.stop
+        end
+
+        if $reload_config
+          $reload_config = false
+          $log.info "reloading config file on SIGHUP."
+          begin
+            config = Marinda::GlobalConfig.new $options.config_path
+            config.export_debugging_flags()
+            $log.debug "%p", config if $options.verbose
+            space.update_config config
+
+          rescue # Marinda::ConfigBase::MalformedConfigException & YAML except
+            msg = $!.class.name + ": " + $!.to_s
+            $log.err "ERROR: couldn't load new config from '%s': %s; " +
+              "backtrace: %s", $options.config_path, msg,
+            $!.backtrace.join(" <= ")
+          end
+        end
+      end
+    end
+
+    @timer.space = self
+    @timer.attach Rev::Loop.default
+
     RevServerConnection.space = self
     RevServerConnection.nodes = @config.nodes
 
     @server = Rev::TCPServer.new '0.0.0.0', @config.server_port,
       RevServerConnection
     @server.attach Rev::Loop.default
+
     Rev::Loop.default.run
   end
 
