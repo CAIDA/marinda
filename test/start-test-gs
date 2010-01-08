@@ -2,4 +2,4 @@
 
 RUBY=${1:-ruby}
 
-GEM_SKIP=marinda $RUBY -I../lib ../bin/marinda-gs --root=. --no-detach -v
+GEM_SKIP=marinda $RUBY -I../lib -I../ext ../bin/marinda-gs --root=. --no-detach -v
