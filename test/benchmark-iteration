@@ -150,18 +150,28 @@ def bm_x_all(descr, ts, template, n)
   puts "Clearing and populating region ..."
   Benchmark.bm(14) do |bm|
     bm.report("clear") do clear ts end
-    bm.report("populate") do populate ts, n end
+    p_tms = bm.report("populate") do populate ts, n end
+
+    puts
+    printf "populate: %.2f us/op; %.0f op/sec\n", (1.0e6 * p_tms.real).quo(n),
+      n.quo(p_tms.real)
   end
 
   puts
   Benchmark.bm(14) do |bm|
-    bm.report("read_all") do
+    ra_tms = bm.report("read_all") do
       ts.read_all template do |tuple|; end
     end
 
-    bm.report("take_all") do
+    ta_tms = bm.report("take_all") do
       ts.take_all template do |tuple|; end
     end
+
+    puts
+    printf "read_all: %.2f us/op; %.0f op/sec\n", (1.0e6 * ra_tms.real).quo(n),
+      n.quo(ra_tms.real)
+    printf "take_all: %.2f us/op; %.0f op/sec\n", (1.0e6 * ta_tms.real).quo(n),
+      n.quo(ta_tms.real)
   end
 end
 
@@ -176,20 +186,30 @@ def bm_x_async_all(descr, ts, template, n)
   puts "Clearing and populating region ..."
   Benchmark.bm(14) do |bm|
     bm.report("clear") do clear ts end
-    bm.report("populate") do populate ts, n end
+    p_tms = bm.report("populate") do populate ts, n end
+
+    puts
+    printf "populate: %.2f us/op; %.0f op/sec\n", (1.0e6 * p_tms.real).quo(n),
+      n.quo(p_tms.real)
   end
 
   puts
   Benchmark.bm(14) do |bm|
-    bm.report("read_all_async") do
+    ra_tms = bm.report("read_all_async") do
       ts.read_all_async template do |tuple|; end
       $loop.start
     end
 
-    bm.report("take_all_async") do
+    ta_tms = bm.report("take_all_async") do
       ts.take_all_async template do |tuple|; end
       $loop.start
     end
+
+    puts
+    printf "read_all: %.2f us/op; %.0f op/sec\n", (1.0e6 * ra_tms.real).quo(n),
+      n.quo(ra_tms.real)
+    printf "take_all: %.2f us/op; %.0f op/sec\n", (1.0e6 * ta_tms.real).quo(n),
+      n.quo(ta_tms.real)
   end
 
   $loop.remove_source ts
