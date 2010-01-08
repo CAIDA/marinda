@@ -40,6 +40,7 @@
 
 require 'ostruct'
 
+require 'rev'
 require 'mioext'
 require 'marinda/list'
 require 'marinda/msgcodes'
@@ -47,6 +48,7 @@ require 'marinda/port'
 require 'marinda/tuple'
 require 'marinda/region'
 require 'marinda/globalstate'
+require 'marinda/connection'
 require 'marinda/version'
 
 module Marinda
@@ -546,6 +548,98 @@ class GlobalSpace
         end
       end
     end
+  end
+
+
+  # The main event loop, handling new client connections and requests on
+  # established client connections.
+  #
+  # This is called by the marinda-gs script, and any exceptions are caught
+  # and reported there.
+  def execute_rev
+    RevServerConnection.space = self
+    RevServerConnection.nodes = @config.nodes
+
+    @server = Rev::TCPServer.new '0.0.0.0', @config.server_port,
+      RevServerConnection
+    @server.attach Rev::Loop.default
+    Rev::Loop.default.run
+  end
+
+
+  def on_connect(conn, node_id)
+    context = @contexts[node_id]
+    if context
+      conn = context.sock
+      if conn
+        $log.info "purging existing connection with node %d", node_id        
+        context.sock = nil
+        conn.close rescue nil
+      end
+    else
+      @contexts[node_id] = context = Context.new(node_id)
+    end
+
+    context.negotiating = true
+    context.sock = conn
+    return SockState.new(context)
+  end
+
+
+  def on_read(state, data)
+    # We must guard against a socket becoming defunct in the same round of
+    # select() processing.
+    #return unless sock.__connection_state == :connected
+
+    messages = []  # list of payload
+
+    buffer = state.read_buffer
+    buffer.payload ||= ""
+
+    $log.debug "read_data from %p (node %d): %p",
+      state.context.sock, state.context.node_id, data if $debug_io_bytes
+
+    start = 0
+    while start < data.length
+      data_left = data.length - start
+
+      desired_length = buffer.length || MESSAGE_LENGTH_SIZE
+      fill_amount = desired_length - buffer.payload.length
+      usable_amount = [fill_amount, data_left].min
+
+      buffer.payload << data[start, usable_amount]
+      start += usable_amount
+
+      if usable_amount == fill_amount
+        if buffer.length
+          if $debug_io_bytes
+            $log.debug "read_data: buffer.length = %d", buffer.length
+            $log.debug "read_data: buffer.payload = %p", buffer.payload
+          end
+          messages << buffer.payload
+          buffer.length = nil
+          buffer.payload = ""
+        else
+          buffer.length = buffer.payload.unpack("N").first
+          buffer.payload = ""
+          if $debug_io_bytes
+            $log.debug "read_data: message length = %d", buffer.length
+          end
+          if buffer.length == 0
+#            raise EOFError, "mux protocol error: message length == 0"
+          end
+        end
+      end
+    end
+
+    messages.each do |payload|
+      process_mux_message state.context, payload
+    end
+  end
+
+
+  def on_close(state)
+
   end
 
 
@@ -1091,9 +1185,10 @@ class GlobalSpace
     hello_message = generate_success_hello_message context
     enq_hello_message context, hello_message
 
-    state = context.sock.__connection
+#    state = context.sock.__connection
     context.unacked_messages.each do |message|
-      state.write_queue << marshal_message(context, message)
+#      state.write_queue << marshal_message(context, message)
+      context.sock.write(marshal_message(context, message))
     end
   end
 
@@ -1102,7 +1197,8 @@ class GlobalSpace
     message = generate_error_hello_message error_text
     enq_hello_message context, message
 
-    context.sock.__connection.write_and_disconnect = true
+#    context.sock.__connection.write_and_disconnect = true
+    context.sock.state.write_and_disconnect = true
   end
 
 
@@ -1130,7 +1226,8 @@ class GlobalSpace
 
 
   def enq_hello_message(context, message)
-    context.sock.__connection.write_queue << message
+#    context.sock.__connection.write_queue << message
+    context.sock.write message
     # Note: Don't send unacked_messages until negotiations are over.
   end
 
@@ -1171,9 +1268,10 @@ class GlobalSpace
     message = Message.new context.seqnum, command, contents
     context.seqnum += 1
 
-    if context.sock && context.sock.__connection_state == :connected
-      context.sock.__connection.write_queue << marshal_message(context, message)
-    end
+    context.sock.write(marshal_message(context, message))
+#    if context.sock && context.sock.__connection_state == :connected
+#      context.sock.__connection.write_queue << marshal_message(context, message)
+#    end
     context.unacked_messages << message
   end
 

@@ -26,6 +26,8 @@
 require 'socket'
 require 'openssl'
 
+require 'rev'
+
 # NOTE: Be sure to set BasicSocket.do_not_reverse_lookup to false at program
 #       startup or IPSocket#peeraddr() might be slow.
 
@@ -511,6 +513,57 @@ class AcceptingSSLConnection
       @client_sock.__connection_state = :defunct
       return nil
     end
+  end
+
+end
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+class RevServerConnection < Rev::TCPSocket
+
+  class << self
+    attr_accessor :space, :nodes
+  end
+
+  attr_accessor :state
+
+  # This implements a simple firewall by only accepting connections from the
+  # known IP addresses of nodes.
+  def on_connect
+    begin
+      peer_ip = peeraddr()[3]
+      node_id = RevServerConnection.nodes[peer_ip]
+      if node_id
+        $log.info "accepting connection from whitelisted %s, node %d",
+          peer_ip, node_id
+        @state = RevServerConnection.space.on_connect self, node_id
+      else
+        $log.notice "rejecting connection from %s: node not in whitelist",
+          peer_ip
+        close() rescue nil
+      end
+
+    rescue
+      $log.err "on_connect failed: %p", $!
+      close() rescue nil
+    end
+  end
+
+
+  def on_read(data)
+    RevServerConnection.space.on_read @state, data
+  end
+
+
+  def on_write_complete
+    if @state.write_and_disconnect
+      close() rescue nil
+    end
+  end
+
+
+  def on_close
+    RevServerConnection.space.on_close @state
   end
 
 end
