@@ -72,7 +72,7 @@ class Tuple
   flag :auto_decrement, 0x08
 
   attr_accessor :seqnum, :flags, :sender, :forwarder, :access_fd
-  attr_reader :values
+  attr_accessor :values
 
   def self.from_mio(s)
     # 0:seqnum   1:flags   2:sender   3:forwarder   4:values
@@ -120,8 +120,8 @@ end
 
 class Template
 
-  attr_accessor :reqnum
-  attr_reader :sender, :values
+  attr_accessor :reqnum, :values
+  attr_reader :sender
 
   def self.from_mio(s)
     # 0:reqnum   1:sender   2:values

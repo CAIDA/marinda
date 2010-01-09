@@ -566,8 +566,8 @@ class Channel
       return payload.unpack("CCa*")
 
     when WRITE_CMD, REPLY_CMD
-      values = MIO.decode payload[1 ... payload.length]
-      return [ code, Tuple.new(@private_port, values) ]
+      values_mio = payload[1 ... payload.length]
+      return [ code, Tuple.new(@private_port, values_mio) ]
 
     when REMEMBER_CMD, CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
 	CREATE_GLOBAL_COMMONS_CHANNEL_CMD
@@ -579,16 +579,16 @@ class Channel
     when WRITE_TO_CMD, FORWARD_TO_CMD, PASS_ACCESS_TO_CMD
       peer = payload[1..4].unpack("N").first
       port = (code == FORWARD_TO_CMD ? @peer_port : @private_port)
-      values = MIO.decode payload[5 ... payload.length]
-      retval = [ code, peer, Tuple.new(port, values) ]
+      values_mio = payload[5 ... payload.length]
+      retval = [ code, peer, Tuple.new(port, values_mio) ]
       retval << fd if code == PASS_ACCESS_TO_CMD
       return retval
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, TAKE_PRIV_CMD,
 	TAKEP_PRIV_CMD, READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
         MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
-      values = MIO.decode payload[1 ... payload.length]
-      template = Template.new @private_port, values
+      values_mio = payload[1 ... payload.length]
+      template = Template.new @private_port, values_mio
       template.reqnum = reqnum
       return [ code, template ]
 
