@@ -610,7 +610,7 @@ class GlobalSpace
         $log.info "purging existing connection with node %d", node_id        
         context.sock = nil
         sock.close rescue nil
-        sock.__connection_state = :defunct
+        #sock.__connection_state = :defunct
       end
     end
   end
@@ -844,8 +844,7 @@ class GlobalSpace
       flags, recipient, sender, forwarder, values_mio =
         payload.unpack("Nwwwa*") 
 
-      values = MIO.decode values_mio
-      tuple = Tuple.new sender, values
+      tuple = Tuple.new sender, values_mio
       tuple.flags = flags
       tuple.forwarder = (forwarder == 0 ? nil : forwarder)
       return [recipient, tuple]
@@ -859,9 +858,8 @@ class GlobalSpace
 	recipient, sender, values_mio = payload.unpack("wwa*")
 	cursor = nil
       end
-      values = MIO.decode values_mio
 
-      template = Template.new sender, values
+      template = Template.new sender, values_mio
       template.reqnum = reqnum
       retval = [recipient, template]
       retval << cursor if cursor
@@ -1146,9 +1144,8 @@ class GlobalSpace
       sender = tuple.sender
       forwarder = (tuple.forwarder || 0)
       seqnum = tuple.seqnum
-      values_mio = MIO.encode tuple.values
       contents = [ response, command_seqnum, flags, sender, forwarder,
-                   seqnum, values_mio ].pack("CwNwwwa*")
+                   seqnum, tuple.values_mio ].pack("CwNwwwa*")
     else
       response = TUPLE_NIL_RESP
       contents = [ response, command_seqnum ].pack("Cw")

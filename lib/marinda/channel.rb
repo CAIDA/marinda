@@ -619,11 +619,11 @@ class Channel
     when tuple && tuple.access_fd
       @peer_port = tuple.sender
       send_with_fd reqnum, tuple.access_fd,
-	"Ca*", TUPLE_WITH_RIGHTS_RESP, MIO.encode(tuple.values)
+	"Ca*", TUPLE_WITH_RIGHTS_RESP, tuple.values_mio
       tuple.access_fd = nil
     when tuple
       @peer_port = tuple.sender
-      send reqnum, "Ca*", TUPLE_RESP, MIO.encode(tuple.values)
+      send reqnum, "Ca*", TUPLE_RESP, tuple.values_mio
     else
       send reqnum, "C", TUPLE_NIL_RESP
     end

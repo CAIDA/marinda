@@ -220,8 +220,7 @@ class GlobalSpaceMux
       command_seqnum, flags, sender, forwarder, seqnum, values_mio =
 	payload.unpack("wNwwwa*")
 
-      values = MIO.decode values_mio
-      tuple = Tuple.new sender, values
+      tuple = Tuple.new sender, values_mio
       tuple.flags = flags
       tuple.forwarder = (forwarder == 0 ? nil : forwarder)
       tuple.seqnum = seqnum
@@ -371,16 +370,15 @@ class GlobalSpaceMux
     flags = tuple.flags
     sender = tuple.sender
     forwarder = (tuple.forwarder || 0)
-    values_mio = tuple.values
-    contents = [ command, flags, recipient, sender, forwarder, values_mio ].
-      pack("CNwwwa*")
+    contents = [ command, flags, recipient, sender, forwarder,
+                 tuple.values_mio ].pack("CNwwwa*")
     enq_message command, contents
   end
 
 
   def enq_command(command, recipient, request, cursor=nil)
     sender = request.template.sender
-    values_mio = request.template.values
+    values_mio = request.template.values_mio
     if cursor
       contents = [command, recipient, sender, cursor, values_mio].pack("Cwwwa*")
     else

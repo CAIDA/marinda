@@ -72,7 +72,7 @@ class Tuple
   flag :auto_decrement, 0x08
 
   attr_accessor :seqnum, :flags, :sender, :forwarder, :access_fd
-  attr_accessor :values
+  attr_reader :values_mio
 
   def self.from_mio(s)
     # 0:seqnum   1:flags   2:sender   3:forwarder   4:values
@@ -84,16 +84,23 @@ class Tuple
     retval
   end
 
-  def initialize(sender, values)
+  def initialize(sender, values_mio)
     @seqnum = nil
     @flags = 0
     @sender = sender
     @forwarder = nil
     @access_fd = nil
-    @values = values
+    @values_mio = values_mio
+    @values = nil
+  end
+
+  def values
+    @values = MIO.decode @values_mio unless @values
+    @values
   end
 
   def inspect
+    @values = MIO.decode @values_mio unless @values
     sprintf "#<Marinda::Tuple:%#x @flags=0b%b, @sender=%#x, " +
       "@forwarder=%#x, @access_fd=%p @values=[%s]>", object_id, @flags,
       @sender, (@forwarder || 0), @access_fd,
@@ -101,10 +108,12 @@ class Tuple
   end
 
   def to_yaml_properties
+    @values = MIO.decode @values_mio unless @values
     %w{ @seqnum @flags @sender @forwarder @values }  # No @access_fd.
   end
 
   def to_mio  # XXX store version info?
+    @values = MIO.decode @values_mio unless @values
     MIO.encode [ @seqnum, @flags, @sender, @forwarder, @values ]
   end
 
@@ -120,8 +129,8 @@ end
 
 class Template
 
-  attr_accessor :reqnum, :values
-  attr_reader :sender
+  attr_accessor :reqnum
+  attr_reader :sender, :values_mio
 
   def self.from_mio(s)
     # 0:reqnum   1:sender   2:values
@@ -131,13 +140,15 @@ class Template
     retval
   end
 
-  def initialize(sender, values)
+  def initialize(sender, values_mio)
     @reqnum = nil
     @sender = sender
-    @values = values
+    @values_mio = values_mio
+    @values = nil
   end
 
   def match(tuple)
+    @values = MIO.decode @values_mio unless @values
     return true if @values.length == 0
     return false unless @values.length == tuple.values.length
     
@@ -149,16 +160,19 @@ class Template
   end
 
   def inspect
+    @values = MIO.decode @values_mio unless @values
     sprintf "#<Marinda::Template:%#x @reqnum=%p @sender=%#x, " +
       "@values=[%s]>", object_id, @reqnum, @sender,
       @values.map { |v| v.inspect }.join(", ")
   end
 
   def to_yaml_properties
+    @values = MIO.decode @values_mio unless @values
     %w{ @reqnum @sender @values }
   end
 
   def to_mio  # XXX store version info?
+    @values = MIO.decode @values_mio unless @values
     MIO.encode [ @reqnum, @sender, @values ]
   end
 

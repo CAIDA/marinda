@@ -448,7 +448,6 @@ class LocalSpace
     if Port.global? port
       @mux.write port, tuple
     else
-      tuple.values = MIO.decode tuple.values
       region = find_region port
       # note: a private peer region may no longer exist--tolerate this
       region.write tuple, channel if region
@@ -463,7 +462,6 @@ class LocalSpace
       @mux.__send__ operation, port, request
       request
     else
-      template.values = MIO.decode template.values
       find_region(port).__send__ operation, template, channel
     end
   end
@@ -475,7 +473,6 @@ class LocalSpace
       @mux.__send__ operation, port, request, cursor
       request
     else
-      template.values = MIO.decode template.values
       find_region(port).__send__ operation, template, channel, cursor
     end
   end
@@ -498,7 +495,6 @@ class LocalSpace
       @mux.__send__ operation, port, request
       request
     else
-      template.values = MIO.decode template.values
       find_region(port).__send__ operation, template, channel
     end
   end
