@@ -64,7 +64,8 @@ class JudyTupleBag
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, port) do |row|
-      @tuples[tuple.seqnum] = Tuple.from_mio(row[0])
+      tuple = Tuple.from_mio row[0]
+      @tuples[tuple.seqnum] = tuple
     end
   end
 

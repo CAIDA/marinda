@@ -81,6 +81,7 @@ class Tuple
     retval.seqnum = v[0]
     retval.flags = v[1]
     retval.forwarder = v[3]
+    retval
   end
 
   def initialize(sender, values)
@@ -127,6 +128,7 @@ class Template
     v =  MIO.decode s
     retval = Tuple.new v[1], v[2]
     retval.reqnum = v[0]
+    retval
   end
 
   def initialize(sender, values)
