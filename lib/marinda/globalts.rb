@@ -619,11 +619,10 @@ class GlobalSpace
   def on_connect(conn, node_id)
     context = @contexts[node_id]
     if context
-      conn = context.sock
-      if conn
+      if context.sock
         $log.info "purging existing connection with node %d", node_id        
+        context.sock.close() rescue nil
         context.sock = nil
-        conn.close rescue nil
       end
     else
       @contexts[node_id] = context = Context.new(node_id)
