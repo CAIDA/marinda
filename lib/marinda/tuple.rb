@@ -126,7 +126,7 @@ class Template
   def self.from_mio(s)
     # 0:reqnum   1:sender   2:values
     v =  MIO.decode s
-    retval = Tuple.new v[1], v[2]
+    retval = Template.new v[1], v[2]
     retval.reqnum = v[0]
     retval
   end
