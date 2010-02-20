@@ -60,7 +60,6 @@
 #include "ruby.h"
 #include "compat.h"
 
-#include "mio_keywords.h"
 #include "mio_msg.h"
 #include "mio_base64.h"
 #include "mio.h"

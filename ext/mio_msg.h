@@ -40,32 +40,4 @@
 #define MIO_MSG_MAX_MESSAGE_SIZE 65535  /* 2^16 - 1 */
 #define MIO_MSG_MAX_NESTING 255
 
-/* Copy data out if needed for non-transient use. */
-typedef struct {
-  const char* cw_name;
-  keyword_code cw_code;
-  keyword_type cw_type;
-  uint8_t cw_nesting;  /* nesting level of sublists; 0 == top level */
-
-  union {
-    uint32_t u_uint;
-    const char *u_str;
-    const unsigned char *u_blob; /* same pointer as u_str but different type */
-    const char *u_symbol;
-    const char *u_address;
-    const char *u_prefix;
-    struct timeval u_timeval;
-  } value_un;
-
-  size_t cw_len;  /* length of u_str / u_blob */
-} control_word_t;
-
-#define cw_uint        value_un.u_uint
-#define cw_str         value_un.u_str
-#define cw_blob        value_un.u_blob
-#define cw_symbol      value_un.u_symbol
-#define cw_address     value_un.u_address
-#define cw_prefix      value_un.u_prefix
-#define cw_timeval     value_un.u_timeval
-
 #endif /* __MIO_MSG_H__ */
