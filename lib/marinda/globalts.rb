@@ -610,7 +610,7 @@ class GlobalSpace
         $log.info "purging existing connection with node %d", node_id        
         context.sock = nil
         sock.close rescue nil
-        #sock.__connection_state = :defunct
+        sock.__connection_state = :defunct
       end
     end
   end
