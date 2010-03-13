@@ -51,6 +51,122 @@ require 'marinda/version'
 
 module Marinda
 
+class GlobalSpaceEventLoop
+
+  def initialize(config, server_connection, delegate)
+    @config = config
+    @server_connection = server_connection
+    @delegate = delegate  # should not be nil
+
+    @loop = Rev::Loop.new
+    @loop.add_repeating_timer_watcher 5.0, method(:check_signals)  # secs
+    @loop.add_io_watcher server_connection.sock, :r, nil,
+      method(:handle_incoming_connection)
+  end
+
+
+  # The main event loop, handling new client connections and requests on
+  # established client connections.
+  #
+  # This is called by the marinda-gs script, and any exceptions are caught
+  # and reported there.
+  def execute
+    @loop.run
+  end
+
+
+  private #..................................................................
+
+  # Rev callback for periodic timer.
+  def check_signals
+    if $checkpoint_state
+      $checkpoint_state = false
+      $log.info "checkpointing state on SIGUSR1."
+      @delegate.checkpoint_state()
+    end
+
+    if $checkpoint_state_and_exit
+      $checkpoint_state_and_exit = false
+      $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
+      @delegate.checkpoint_state()
+      $log.info "exiting after checkpoint upon request."
+
+      # XXX shutdown event loop and exit program
+    end
+
+    if $reload_config
+      $reload_config = false
+      $log.info "reloading config file on SIGHUP."
+      begin
+        config = Marinda::GlobalConfig.new $options.config_path
+        config.export_debugging_flags()
+        $log.debug "%p", config if $options.verbose
+        @config = config
+      rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
+        msg = $!.class.name + ": " + $!.to_s
+        $log.err "ERROR: couldn't load new config from '%s': %s; " +
+          "backtrace: %s", $options.config_path, msg,
+        $!.backtrace.join(" <= ")
+      end
+    end
+  end
+
+
+  # Rev callback for @server_connection becoming readable.
+  def handle_incoming_connection(sock, revents, user_data)
+    client_sock, peer_ip, node_id =
+      @server_connection.accept_with_whitelist @config.nodes
+
+    if client_sock
+      if @config.use_ssl && peer_ip != "127.0.0.1"
+        conn = AcceptingSSLConnection.new client_sock, peer_ip, node_id
+        conn.watcher = @loop.add_io_watcher client_sock, :r, conn,
+          method(:handle_ssl_accept)
+      else
+        setup_connection client_sock, node_id
+      end
+    end
+  end
+
+
+  # Rev callback for an AcceptingSSLConnection becoming readable/writable.
+  def handle_ssl_accept(sock, revents, accepting_connection)
+    begin
+      ssl, node_id = accepting_connection.accept
+
+      # By this point, either the accept succeeded, or we got an error like
+      # a post connection failure.  In either case, we'll never need to try
+      # accepting again, so clean up.
+      @loop.remove_io_watcher accepting_connection.watcher()
+
+      if ssl
+        $log.info "established SSL connection with node %d", node_id
+        setup_connection ssl, node_id
+      else # error, nothing further we can do but clean up
+        accepting_connection.sock.close() rescue nil
+      end
+
+    # not sure EINTR can be raised by SSL accept
+    rescue Errno::EINTR
+
+    rescue IO::WaitReadable
+      @loop.update_io_watcher_events accepting_connection.watcher(), :r
+
+    rescue IO::WaitWritable
+      @loop.update_io_watcher_events accepting_connection.watcher(), :w
+    end
+  end
+
+
+  def setup_connection(sock, node_id)
+    watcher = @loop.add_io_watcher sock, :r
+    @delegate.setup_connection sock, node_id, watcher
+  end
+
+end
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 class GlobalSpace
 
   private
@@ -297,9 +413,7 @@ class GlobalSpace
 
   #------------------------------------------------------------------------
 
-  def initialize(config, server_connection, state_db_path)
-    @config = config
-    @server_connection = server_connection
+  def initialize(state_db_path)
     @global_state = GlobalState.new state_db_path
 
     @services = {}
@@ -312,15 +426,6 @@ class GlobalSpace
     }
 
     @contexts = {}       # node_id => Context
-    @accepting_connections = []   # [ AcceptingSSLConnection ]
-
-    # IO sets to pass to Kernel::select, and IO sets returned by
-    # select.  We use instance variables so that it is easier to inspect
-    # a core dump with gdb.
-    @read_set = []
-    @write_set = []
-    @readable = nil
-    @writable = nil
 
     restore_state()
   end
@@ -417,155 +522,6 @@ class GlobalSpace
 
   public  #..................................................................
 
-  # The main event loop, handling new client connections and requests on
-  # established client connections.
-  #
-  # This is called by the marinda-gs script, and any exceptions are caught
-  # and reported there.
-  def execute
-    loop do
-      @read_set.clear
-      @write_set.clear
-
-      @read_set << @server_connection.sock
-
-      @accepting_connections.each do |conn|
-        @read_set << conn.sock if conn.need_io == :read
-        @write_set << conn.sock if conn.need_io == :write
-      end
-
-      @contexts.each_value do |context|
-        sock = context.sock
-        if sock && sock.__connection_state == :connected
-          state = sock.__connection
-          case state.ssl_io  # see comments at class SockState
-          when :read_needs_writable then @write_set << sock
-          when :write_needs_readable then @read_set << sock
-          when nil
-            @read_set << sock
-            @write_set << sock unless state.write_queue.empty?
-          else
-            msg = sprintf "INTERNAL ERROR: unknown ssl_io=%p " +
-              "for socket %p", state.ssl_io, sock
-            fail msg
-          end
-        end
-      end
-
-      if $debug_io_select
-        $log.debug "GlobalSpace: waiting for I/O ..."
-        $log.debug "%d pending SSL connections", @accepting_connections.length
-        $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
-        $log.debug "select write_set (%d fds): %p", @write_set.length,@write_set
-      end
-
-      # XXX select can throw "closed stream (IOError)" if a write file
-      #     descriptor has been closed previously; we may want to catch
-      #     this exception and remove the closed descriptor.  Strictly
-      #     speaking, users shouldn't be passing in closed file descriptors.
-      @readable, @writable = select @read_set, @write_set, nil, TIMEOUT
-      if $debug_io_select
-        $log.debug "select returned %d readable, %d writable",
-          (@readable ? @readable.length : 0), (@writable ? @writable.length : 0)
-      end
-
-      if @readable
-        @readable.each do |sock|
-          $log.debug "readable %p", sock if $debug_io_select
-          case sock.__connection_state
-          when :connected
-            if sock.__connection.ssl_io == :write_needs_readable
-              sock.__connection.ssl_io = nil
-              write_data sock
-            else
-              read_data sock
-            end
-          when :listening then handle_incoming_connection()
-          when :ssl_accepting then handle_ssl_accept sock
-          when :defunct  # nothing to do
-          else
-            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
-              "for readable %p", sock.__connection_state, sock
-            fail msg
-          end
-        end
-      end
-
-      if @writable
-        @writable.each do |sock|
-          $log.debug "writable %p", sock if $debug_io_select
-          case sock.__connection_state
-          when :connected
-            if sock.__connection.ssl_io == :read_needs_writable
-              sock.__connection.ssl_io = nil
-              read_data sock
-            else
-              write_data sock
-            end
-          when :ssl_accepting then handle_ssl_accept sock
-          when :defunct  # nothing to do
-          when :listening
-            msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
-              "for writable %p", sock
-            fail msg
-          else
-            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
-              "for writable %p", sock.__connection_state, sock
-            fail msg
-          end
-        end
-      end
-
-      if $checkpoint_state
-        $checkpoint_state = false
-        $log.info "checkpointing state on SIGUSR1."
-        checkpoint_state()
-      end
-
-      if $checkpoint_state_and_exit
-        $checkpoint_state_and_exit = false
-        $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
-        checkpoint_state()
-        $log.info "exiting after checkpoint upon request."
-        return
-      end
-
-      if $reload_config
-        $reload_config = false
-        $log.info "reloading config file on SIGHUP."
-        begin
-          config = Marinda::GlobalConfig.new $options.config_path
-          config.export_debugging_flags()
-          $log.debug "%p", config if $options.verbose
-          @config = config
-        rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
-          msg = $!.class.name + ": " + $!.to_s
-          $log.err "ERROR: couldn't load new config from '%s': %s; " +
-            "backtrace: %s", $options.config_path, msg,
-            $!.backtrace.join(" <= ")
-        end
-      end
-    end
-  end
-
-
-  private #..................................................................
-
-  def handle_incoming_connection
-    client_sock, peer_ip, node_id =
-      @server_connection.accept_with_whitelist @config.nodes
-
-    if client_sock
-      if @config.use_ssl && peer_ip != "127.0.0.1"
-        conn = AcceptingSSLConnection.new client_sock, peer_ip, node_id
-        @accepting_connections << conn
-      else
-        setup_connection client_sock, node_id
-      end
-    end
-  end
-
-
   def setup_connection(sock, node_id)
     purge_previous_connection node_id
     context = (@contexts[node_id] ||= Context.new(node_id))
@@ -612,27 +568,6 @@ class GlobalSpace
         sock.close rescue nil
         sock.__connection_state = :defunct
       end
-    end
-  end
-
-
-  def handle_ssl_accept(sock)
-    begin
-      conn = sock.__connection
-      ssl, node_id = conn.accept
-
-      # By this point, either the accept succeeded, or we got an error like
-      # a post connection failure.  In either case, we'll never need to try
-      # accepting again, so clean up.
-      @accepting_connections.delete conn
-      if ssl
-        $log.info "established SSL connection with node %d", node_id
-        setup_connection ssl, node_id
-      end
-
-    # not sure EINTR can be raised by SSL accept
-    rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable
-      # do nothing; we'll automatically retry in next select round
     end
   end
 
