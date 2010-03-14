@@ -34,16 +34,12 @@ require 'socket'
 require 'syslog'
 require 'yaml'
 
+require 'eva'  # needed to use OpenSSL on Ruby < 1.9.2
+
 require 'marinda/utils'
 require 'marinda/config'
 require 'marinda/globalts'
 require 'marinda/connection'
-
-# Compatibility for Ruby versions before 1.9.2 preview 2.
-class IO
-  module WaitReadable; end
-  module WaitWritable; end
-end
 
 Thread.abort_on_exception = true
 BasicSocket.do_not_reverse_lookup = true
@@ -176,15 +172,6 @@ end
 # restart the global server.
 connection = Marinda::InsecureServerConnection.new config.server_port
 if config.use_ssl
-  if (RUBY_VERSION.split(/\./).map {|x| x.to_i} <=> [1, 9, 2]) < 0
-    begin
-      require 'openssl/nonblock'
-    rescue LoadError
-      $stderr.printf "ERROR: For Ruby version %s < 1.9.2, you must install Tony Arcieri's openssl-nonblock gem.\n", RUBY_VERSION
-      exit 1
-    end
-  end
-
   Marinda::AcceptingSSLConnection.set_ssl_context config.cert, config.key,
     config.ca_file, config.ca_path, config.check_client_name
 end

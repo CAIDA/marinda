@@ -40,6 +40,8 @@
 
 require 'ostruct'
 
+require 'eva'
+
 require 'mioext'
 require 'marinda/list'
 require 'marinda/msgcodes'
@@ -60,7 +62,7 @@ class GlobalSpaceEventLoop
     @server_connection = server_connection
     @delegate = delegate  # should not be nil
 
-    @loop = Rev::Loop.new
+    @loop = Eva::Loop.new
     @loop.add_repeating_timer_watcher SIGNAL_INTERVAL, method(:check_signals)
     @loop.add_io_watcher server_connection.sock, :r, nil,
       method(:handle_incoming_connection)
@@ -79,7 +81,7 @@ class GlobalSpaceEventLoop
 
   private #..................................................................
 
-  # Rev callback for periodic timer.
+  # Eva callback for periodic timer.
   def check_signals
     if $checkpoint_state
       $checkpoint_state = false
@@ -114,7 +116,7 @@ class GlobalSpaceEventLoop
   end
 
 
-  # Rev callback for @server_connection becoming readable.
+  # Eva callback for @server_connection becoming readable.
   def handle_incoming_connection(sock, revents, user_data)
     client_sock, peer_ip, node_id =
       @server_connection.accept_with_whitelist @config.nodes
@@ -131,7 +133,7 @@ class GlobalSpaceEventLoop
   end
 
 
-  # Rev callback for an AcceptingSSLConnection becoming readable/writable.
+  # Eva callback for an AcceptingSSLConnection becoming readable/writable.
   def handle_ssl_accept(sock, revents, accepting_connection)
     begin
       ssl, node_id = accepting_connection.accept
