@@ -452,7 +452,7 @@ class AcceptingSSLConnection
 
   #........................................................................
 
-  attr_accessor :need_io
+  attr_accessor :watcher, :need_io
   attr_reader :node_id
 
   # {client_sock} is a socket returned by TCPServer#accept_nonblock

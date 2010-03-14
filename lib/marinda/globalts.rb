@@ -53,13 +53,15 @@ module Marinda
 
 class GlobalSpaceEventLoop
 
+  SIGNAL_INTERVAL = 5.0 # seconds between checks for signals
+
   def initialize(config, server_connection, delegate)
     @config = config
     @server_connection = server_connection
     @delegate = delegate  # should not be nil
 
     @loop = Rev::Loop.new
-    @loop.add_repeating_timer_watcher 5.0, method(:check_signals)  # secs
+    @loop.add_repeating_timer_watcher SIGNAL_INTERVAL, method(:check_signals)
     @loop.add_io_watcher server_connection.sock, :r, nil,
       method(:handle_incoming_connection)
   end
@@ -137,7 +139,7 @@ class GlobalSpaceEventLoop
       # By this point, either the accept succeeded, or we got an error like
       # a post connection failure.  In either case, we'll never need to try
       # accepting again, so clean up.
-      @loop.remove_io_watcher accepting_connection.watcher()
+      @loop.remove_io_watcher accepting_connection.watcher
 
       if ssl
         $log.info "established SSL connection with node %d", node_id
@@ -150,30 +152,30 @@ class GlobalSpaceEventLoop
     rescue Errno::EINTR
 
     rescue IO::WaitReadable
-      @loop.update_io_watcher_events accepting_connection.watcher(), :r
+      @loop.update_io_watcher_events accepting_connection.watcher, :r
 
     rescue IO::WaitWritable
-      @loop.update_io_watcher_events accepting_connection.watcher(), :w
+      @loop.update_io_watcher_events accepting_connection.watcher, :w
     end
   end
 
 
   def setup_connection(sock, node_id)
     watcher = @loop.add_io_watcher sock, :r
-    @delegate.setup_connection sock, node_id, watcher
+    @delegate.setup_connection self, sock, node_id, watcher
   end
 
 end
 
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#==========================================================================
+
 class GlobalSpace
 
   private
 
   include MuxMessageCodes
 
-  TIMEOUT = 5 # seconds of timeout for select
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
   READ_SIZE = 8192         # num bytes to read at once with sysread
 
@@ -398,7 +400,7 @@ class GlobalSpace
   # vice versa for the latter case.  We should not intermix any
   # application-level reads/writes until the SSL renegotiation completes.
   class SockState
-    attr_accessor :context, :read_buffer, :write_queue, :ssl_io
+    attr_accessor :context, :watcher, :read_buffer, :write_queue, :ssl_io
     attr_accessor :write_and_disconnect
 
     def initialize(context)
@@ -522,8 +524,10 @@ class GlobalSpace
 
   public  #..................................................................
 
-  def setup_connection(sock, node_id)
-    purge_previous_connection node_id
+  # Called by GlobalSpaceEventLoop whenever a new client connection (with
+  # or without SSL, depending on configuration) is fully established.
+  def setup_connection(loop, sock, node_id, watcher)
+    purge_previous_connection loop, node_id
     context = (@contexts[node_id] ||= Context.new(node_id))
     context.negotiating = true
     context.sock = sock
@@ -532,6 +536,7 @@ class GlobalSpace
     # unacked messages retransmitted) until hello negotiations have
     # successfully completed.
     sock.__connection = SockState.new context
+    sock.__connection.watcher = watcher
   end
 
 
@@ -558,7 +563,7 @@ class GlobalSpace
   #       accept, but we shouldn't purge entries in @accepting_connections.
   #       If we do, there's a danger of dropping legitimate reconnection
   #       attempts.
-  def purge_previous_connection(node_id)
+  def purge_previous_connection(loop, node_id)
     context = @contexts[node_id]
     if context
       sock = context.sock
@@ -567,6 +572,9 @@ class GlobalSpace
         context.sock = nil
         sock.close rescue nil
         sock.__connection_state = :defunct
+        loop.remove_io_watcher sock.__connection.watcher
+        sock.__connection.watcher = nil
+        sock.__connection = nil
       end
     end
   end
@@ -574,16 +582,24 @@ class GlobalSpace
 
   #--------------------------------------------------------------------------
 
-  def read_data(sock)
+  # Called by GlobalSpaceEventLoop whenever a file descriptor is ready to
+  # be read.
+  def read_data(loop, sock)
     # We must guard against a socket becoming defunct in the same round of
     # select() processing.
     return unless sock.__connection_state == :connected
 
-    messages = []  # list of payload
-
     state = sock.__connection
+#     if state.ssl_io == :write_needs_readable
+#       state.ssl_io == nil
+#       loop.update_io_watcher_events state.watcher, :w
+#       write_data loop, sock
+#       return
+#     end
+
     buffer = state.read_buffer
     buffer.payload ||= ""
+    messages = []  # list of payload
 
     begin
 #      loop do  # XXX don't loop or we might starve other connections
@@ -641,11 +657,12 @@ class GlobalSpace
       $log.info "SSL renegotiation: read_data from %p (node %d): " +
         "IO::WaitWritable", sock, state.context.node_id
       state.ssl_io = :read_needs_writable
+      loop.update_io_watcher_events sock.__connection.watcher, :w
 
-    rescue SocketError, IOError, EOFError, SystemCallError,OpenSSL::SSL::SSLError
+    rescue SocketError, IOError, EOFError,SystemCallError,OpenSSL::SSL::SSLError
       $log.info "read_data from %p (node %d): %p",
         sock, state.context.node_id, $!
-      reset_connection state.context
+      reset_connection loop, state.context
     end
 
     messages.each do |payload|
@@ -654,14 +671,28 @@ class GlobalSpace
   end
 
 
+  # Called by GlobalSpaceEventLoop whenever a file descriptor is ready to
+  # be read.
+  #
   # See the comments at class SockState and Context for information on
   # disconnecting during 'hello negotiations'.
-  def write_data(sock)
+  def write_data(loop, sock)
     # We must guard against a socket becoming defunct in the same round of
     # select() processing.
     return unless sock.__connection_state == :connected
 
     state = sock.__connection
+#     if state.ssl_io == :read_needs_writable
+#       state.ssl_io == nil
+#       if state.write_queue.empty?
+#         loop.update_io_watcher_events state.watcher, :r
+#       else
+#         loop.update_io_watcher_events state.watcher, :rw
+#       end
+#       read_data loop, sock
+#       return
+#     end
+
     if state.write_queue.length == 1
       buffer = state.write_queue.first
     else # state.write_queue.length > 1
@@ -681,11 +712,13 @@ class GlobalSpace
         end
       end
 
-      state.write_queue.shift
+      state.write_queue.shift  # write_queue will now be empty
       if state.write_and_disconnect
         $log.info "write_data: explicitly disconnecting node %d",
           state.context.node_id
-        reset_connection state.context
+        reset_connection loop, state.context
+      else
+        loop.update_io_watcher_events state.watcher, :r
       end
 
     rescue Errno::EINTR  # might be raised by write_nonblock
@@ -695,12 +728,13 @@ class GlobalSpace
       $log.info "SSL renegotiation: write_data to %p (node %d): " +
         "IO::WaitReadable", sock, state.context.node_id
       state.ssl_io = :write_needs_readable
+      loop.update_io_watcher_events sock.__connection.watcher, :r
 
     # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
     # plain Errno::EWOULDBLOCK, so technically we could get rid of
     # IO::WaitWritable.  However, we need IO::WaitWritable for SSL.
     rescue Errno::EWOULDBLOCK, IO::WaitWritable
-      $log.debug "write_data from %p (node %d): IO::WaitWritable",
+      $log.debug "write_data to %p (node %d): IO::WaitWritable",
         sock, state.context.node_id if $debug_io_bytes
       # do nothing, since we'll automatically retry in the next select() round
 
@@ -708,17 +742,21 @@ class GlobalSpace
     # This also catches Errno::EPIPE.
     rescue SocketError, IOError, SystemCallError, OpenSSL::SSL::SSLError
       $log.info "write_data to %p (node %d): %p", sock, state.context.node_id,$!
-      reset_connection state.context
+      reset_connection loop, state.context
     end
   end
 
 
-  def reset_connection(context)
-    return unless context.sock
-    context.sock.close rescue nil
-    context.sock.__connection_state = :defunct
-    context.sock.__connection = nil
+  def reset_connection(loop, context)
+    sock = context.sock
     context.sock = nil
+    return unless sock
+
+    sock.close rescue nil
+    sock.__connection_state = :defunct
+    loop.remove_io_watcher sock.__connection.watcher
+    sock.__connection.watcher = nil
+    sock.__connection = nil
   end
 
 
@@ -883,7 +921,7 @@ class GlobalSpace
     when FIN_CMD
       $log.info "FIN_CMD: explicitly and permanently removing node %d",
         context.node_id
-      reset_connection context
+      reset_connection nil, context  # XXX need loop argument
       reset_node_session_state context
       context.purge_all_state()
       @contexts.delete context.node_id

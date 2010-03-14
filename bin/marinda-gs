@@ -201,8 +201,9 @@ exit_status = 0
 
 begin
   $log.info "waiting for clients on port %d", config.server_port
-  space = Marinda::GlobalSpace.new config, connection, $options.state_db
-  space.execute  # only returns on checkpoint-and-exit request
+  space = Marinda::GlobalSpace.new $options.state_db
+  loop = Marinda::GlobalSpaceEventLoop.new config, connection, space
+  loop.execute  # only returns on checkpoint-and-exit request
 
 rescue
   short_msg = $!.class.name + ": " + $!.to_s
