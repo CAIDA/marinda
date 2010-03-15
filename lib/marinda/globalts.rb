@@ -62,10 +62,10 @@ class GlobalSpaceEventLoop
     @server_connection = server_connection
     @delegate = delegate  # should not be nil
 
-    @loop = Eva::Loop.new
-    @loop.add_repeating_timer_watcher SIGNAL_INTERVAL, method(:check_signals)
-    @loop.add_io_watcher server_connection.sock, :r, nil,
-      method(:handle_incoming_connection)
+    @loop = Eva::Loop.default
+    @loop.add_periodic_timer SIGNAL_INTERVAL, &method(:check_signals)
+    @loop.add_io server_connection.sock, :r,
+      &method(:handle_incoming_connection)
   end
 
 
@@ -82,7 +82,7 @@ class GlobalSpaceEventLoop
   private #..................................................................
 
   # Eva callback for periodic timer.
-  def check_signals
+  def check_signals(watcher)
     if $checkpoint_state
       $checkpoint_state = false
       $log.info "checkpointing state on SIGUSR1."
@@ -117,15 +117,15 @@ class GlobalSpaceEventLoop
 
 
   # Eva callback for @server_connection becoming readable.
-  def handle_incoming_connection(sock, revents, user_data)
+  def handle_incoming_connection(watcher, revents)
     client_sock, peer_ip, node_id =
       @server_connection.accept_with_whitelist @config.nodes
 
     if client_sock
       if @config.use_ssl && peer_ip != "127.0.0.1"
         conn = AcceptingSSLConnection.new client_sock, peer_ip, node_id
-        conn.watcher = @loop.add_io_watcher client_sock, :r, conn,
-          method(:handle_ssl_accept)
+        conn.watcher = @loop.add_io client_sock, :r, &method(:handle_ssl_accept)
+        conn.watcher.user_data = conn
       else
         setup_connection client_sock, node_id
       end
@@ -134,14 +134,15 @@ class GlobalSpaceEventLoop
 
 
   # Eva callback for an AcceptingSSLConnection becoming readable/writable.
-  def handle_ssl_accept(sock, revents, accepting_connection)
+  def handle_ssl_accept(watcher, revents)
     begin
+      accepting_connection = watcher.user_data
       ssl, node_id = accepting_connection.accept
 
       # By this point, either the accept succeeded, or we got an error like
       # a post connection failure.  In either case, we'll never need to try
       # accepting again, so clean up.
-      @loop.remove_io_watcher accepting_connection.watcher
+      @loop.remove_io watcher
 
       if ssl
         $log.info "established SSL connection with node %d", node_id
@@ -154,16 +155,16 @@ class GlobalSpaceEventLoop
     rescue Errno::EINTR
 
     rescue IO::WaitReadable
-      @loop.update_io_watcher_events accepting_connection.watcher, :r
+      @loop.set_io_events watcher, :r
 
     rescue IO::WaitWritable
-      @loop.update_io_watcher_events accepting_connection.watcher, :w
+      @loop.set_io_events watcher, :w
     end
   end
 
 
   def setup_connection(sock, node_id)
-    watcher = @loop.add_io_watcher sock, :r
+    watcher = @loop.add_io sock, :r
     @delegate.setup_connection self, sock, node_id, watcher
   end
 
@@ -586,7 +587,9 @@ class GlobalSpace
 
   # Called by GlobalSpaceEventLoop whenever a file descriptor is ready to
   # be read.
-  def read_data(loop, sock)
+  def on_io_read(watcher, revents)
+    sock = watcher.io
+
     # We must guard against a socket becoming defunct in the same round of
     # select() processing.
     return unless sock.__connection_state == :connected
@@ -678,7 +681,9 @@ class GlobalSpace
   #
   # See the comments at class SockState and Context for information on
   # disconnecting during 'hello negotiations'.
-  def write_data(loop, sock)
+  def on_io_write(watcher, revents)
+    sock = watcher.io
+
     # We must guard against a socket becoming defunct in the same round of
     # select() processing.
     return unless sock.__connection_state == :connected
