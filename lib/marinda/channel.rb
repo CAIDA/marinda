@@ -288,7 +288,7 @@ class Channel
 
 
   def hello(reqnum, command, client_protocol, client_banner)
-    if client_protocol <= 2 || protocol > PROTOCOL_VERSION
+    if client_protocol <= 2 || client_protocol > PROTOCOL_VERSION
       raise ChannelProtocolUnsupportedError,
        "protocol version not supported; must be >= 3 and <= #{PROTOCOL_VERSION}"
     else
