@@ -46,6 +46,7 @@ module Marinda
 class Channel
 
   class ChannelError < RuntimeError; end
+  class ChannelProtocolUnsupportedError < ChannelError; end
   class ChannelPrivilegeError < ChannelError; end
 
   include ChannelMessageCodes
@@ -287,9 +288,14 @@ class Channel
 
 
   def hello(reqnum, command, client_protocol, client_banner)
-    @protocol = [ PROTOCOL_VERSION, client_protocol ].min
-    send reqnum, "CCNa*", HELLO_RESP, @protocol, @flags.flags,
-      "Marinda Ruby local server v#{Marinda::VERSION}"
+    if client_protocol <= 2 || protocol > PROTOCOL_VERSION
+      raise ChannelProtocolUnsupportedError,
+       "protocol version not supported; must be >= 3 and <= #{PROTOCOL_VERSION}"
+    else
+      @protocol = [ PROTOCOL_VERSION, client_protocol ].min
+      send reqnum, "CCNa*", HELLO_RESP, @protocol, @flags.flags,
+        "Marinda Ruby local server v#{Marinda::VERSION}"
+    end
   end
 
 
@@ -782,15 +788,21 @@ class Channel
       shutdown_connection = true
     end
 
+    reqnum = nil
     begin
       @messages.each do |payload, file|
+        reqnum = payload.unpack("C").first
         handle_client_message payload, file
       end
 
     rescue ChannelPrivilegeError
       $log.debug "Channel#handle_client_message raised %p", $!
-      reqnum = payload.unpack("C").first
       send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
+      shutdown()
+
+    rescue ChannelProtocolUnsupportedError
+      $log.debug "Channel#handle_client_message raised %p", $!
+      send_error reqnum, ERRORSUB_PROTOCOL_NOT_SUPPORTED, $!.to_s
       shutdown()
 
     rescue ChannelError

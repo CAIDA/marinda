@@ -28,12 +28,15 @@ module Marinda
 #       of message codes will change and break protocol interoperability.
 module ChannelMessageCodes
 
+  # Protocol 3:
+  #  * switched to using MIO (instead of YAML) for encoding tuples
+  #
   # Protocol 2b:
   #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
   #
   # Protocol 2:
   #  * removed DUMP_CMD
-  PROTOCOL_VERSION = 2
+  PROTOCOL_VERSION = 3
 
   MAX_SERVICE_HANDLE = 1024
   FIRST_USER_HANDLE = 1025
@@ -112,13 +115,16 @@ end
 
 module MuxMessageCodes
 
+  # Protocol 3:
+  #  * switched to using MIO (instead of YAML) for encoding tuples
+  #
   # Protocol 2b:
   #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
   #
   # Protocol 2:
   #  * added session ID and node ID to HELLO_CMD & HELLO_RESP
   #  * removed DUMP_CMD
-  PROTOCOL_VERSION = 2
+  PROTOCOL_VERSION = 3
 
   MAX_SERVICE_HANDLE = 1024
   FIRST_USER_HANDLE = 1025

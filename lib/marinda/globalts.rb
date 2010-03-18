@@ -871,7 +871,7 @@ class GlobalSpace
 
     when HELLO_CMD
       protocol, rest = payload.unpack("Na*")
-      if protocol <= 1 || protocol > PROTOCOL_VERSION
+      if protocol <= 2 || protocol > PROTOCOL_VERSION
         return [protocol, rest]  # don't bother decoding unsupported protocol
       else
         hello_node_id, hello_session_id, banner = rest.unpack("nwa*")
@@ -979,7 +979,7 @@ class GlobalSpace
 
     when HELLO_CMD
       protocol, hello_node_id, hello_session_id, banner = arguments
-      if protocol <= 1 || protocol > PROTOCOL_VERSION
+      if protocol <= 2 || protocol > PROTOCOL_VERSION
         $log.err "node %d is using the unsupported v%d protocol; force " +
           "disconnecting node", context.node_id, protocol
         error_text = sprintf "unsupported v%d protocol", protocol
