@@ -35,7 +35,7 @@ require 'syslog'
 require 'socket'
 require 'yaml'
 
-require 'eva'
+require 'eva'  # needed to use OpenSSL on Ruby < 1.9.2
 
 require 'marinda/utils'
 require 'marinda/config'

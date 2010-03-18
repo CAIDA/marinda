@@ -188,9 +188,11 @@ exit_status = 0
 
 begin
   $log.info "waiting for clients on port %d", config.server_port
-  space = Marinda::GlobalSpace.new $options.state_db
-  loop = Marinda::GlobalSpaceEventLoop.new config, connection, space
-  loop.execute  # only returns on checkpoint-and-exit request
+  ev_loop = Eva::Loop.default
+  space = Marinda::GlobalSpace.new ev_loop, $options.state_db
+  gs_loop = Marinda::GlobalSpaceEventLoop.new ev_loop, config, connection, space
+  ev_loop.delegate = space
+  ev_loop.run()  # only returns on checkpoint-and-exit request
 
 rescue
   short_msg = $!.class.name + ": " + $!.to_s
