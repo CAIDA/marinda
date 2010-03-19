@@ -715,10 +715,12 @@ class GlobalSpace
 
     if state.write_queue.length == 1
       buffer = state.write_queue.first
-    else # state.write_queue.length > 1
+    elsif state.write_queue.length > 1
       buffer = state.write_queue.join nil
       state.write_queue.clear
       state.write_queue << buffer
+    else  # state.write_queue.length == 0 
+      return  # nothing to do -- spurious write readiness
     end
 
     begin
