@@ -75,7 +75,7 @@ class Tuple
   attr_reader :values_mio
 
   def self.from_mio(s)
-    # 0:seqnum   1:flags   2:sender   3:forwarder   4:values
+    # 0:seqnum   1:flags   2:sender   3:forwarder   4:values_mio
     v =  MIO.decode s
     retval = Tuple.new v[2], v[4]
     retval.seqnum = v[0]
@@ -104,7 +104,7 @@ class Tuple
     sprintf "#<Marinda::Tuple:%#x @flags=0b%b, @sender=%#x, " +
       "@forwarder=%#x, @access_fd=%p @values=[%s]>", object_id, @flags,
       @sender, (@forwarder || 0), @access_fd,
-      @values.map { |v| v || "nil" }.join(", ")
+      @values.map { |v| v.inspect }.join(", ")
   end
 
   def to_yaml_properties
@@ -113,12 +113,11 @@ class Tuple
   end
 
   def to_mio  # XXX store version info?
-    @values = MIO.decode @values_mio unless @values
-    MIO.encode [ @seqnum, @flags, @sender, @forwarder, @values ]
+    MIO.encode [ @seqnum, @flags, @sender, @forwarder, @values_mio ]
   end
 
   def to_s
-    "Marinda::Tuple[" + @values.map { |v| v || "nil" }.join(", ") + "]"
+    "Marinda::Tuple[" + @values.map { |v| v.inspect }.join(", ") + "]"
   end
 
 end
@@ -133,7 +132,7 @@ class Template
   attr_reader :sender, :values_mio
 
   def self.from_mio(s)
-    # 0:reqnum   1:sender   2:values
+    # 0:reqnum   1:sender   2:values_mio
     v =  MIO.decode s
     retval = Template.new v[1], v[2]
     retval.reqnum = v[0]
@@ -172,8 +171,7 @@ class Template
   end
 
   def to_mio  # XXX store version info?
-    @values = MIO.decode @values_mio unless @values
-    MIO.encode [ @reqnum, @sender, @values ]
+    MIO.encode [ @reqnum, @sender, @values_mio ]
   end
 
   def to_s
