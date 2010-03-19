@@ -90,8 +90,6 @@ class GlobalSpaceEventLoop
       $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
       @space.checkpoint_state()
       $log.info "exiting after checkpoint upon request."
-
-      # XXX shutdown event loop and exit program
       @ev_loop.stop()
     end
 
@@ -145,6 +143,7 @@ class GlobalSpaceEventLoop
       client_sock = accepting_connection.sock
       if ssl
         $log.info "established SSL connection with node %d", node_id
+        ssl.sync_close = true
         setup_connection client_sock, ssl, node_id
       else # error, nothing further we can do but clean up
         client_sock.close() rescue nil
@@ -576,12 +575,15 @@ class GlobalSpace
     context = @contexts[node_id]
     if context
       sock = context.sock
+      context.sock = nil
       if sock
         $log.info "purging existing connection with node %d", node_id        
-        context.sock = nil
+        @ev_loop.remove_io sock.__connection.watcher
+
+        # Because we enabled SSL sync_close, closing the SSL socket will
+        # also close the underlying socket if we're using SSL.
         sock.close rescue nil
         sock.__connection_state = :defunct
-        @ev_loop.remove_io sock.__connection.watcher
         sock.__connection.watcher = nil
         sock.__connection = nil
       end
@@ -604,11 +606,13 @@ class GlobalSpace
     return unless sock.__connection_state == :connected
 
     state = sock.__connection
-#     if state.ssl_io == :write_needs_readable
-#       state.ssl_io == nil
-#       on_io_write watcher
-#       return
-#     end
+
+    # Handle any SSL renegotiation in progress.
+    if state.ssl_io == :write_needs_readable
+      state.ssl_io == nil
+      on_io_write watcher
+      return
+    end
 
     buffer = state.read_buffer
     buffer.payload ||= ""
@@ -670,7 +674,7 @@ class GlobalSpace
       $log.info "SSL renegotiation: read_data from %p (node %d): " +
         "IO::WaitWritable", sock, state.context.node_id
       state.ssl_io = :read_needs_writable
-      @ev_loop.set_io_events sock.__connection.watcher, :w
+      @ev_loop.add_io_events watcher, :w
 
     rescue SocketError, IOError, EOFError,SystemCallError,OpenSSL::SSL::SSLError
       $log.info "read_data from %p (node %d): %p",
@@ -700,16 +704,14 @@ class GlobalSpace
     return unless sock.__connection_state == :connected
 
     state = sock.__connection
-#     if state.ssl_io == :read_needs_writable
-#       state.ssl_io == nil
-#       if state.write_queue.empty?
-#         @ev_loop.remove_io_events state.watcher, :w
-#       else
-#         @ev_loop.set_io_events state.watcher, :rw
-#       end
-#       on_io_read watcher
-#       return
-#     end
+
+    # Handle any SSL renegotiation in progress.
+    if state.ssl_io == :read_needs_writable
+      state.ssl_io == nil
+      @ev_loop.remove_io_events watcher, :w if state.write_queue.empty?
+      on_io_read watcher
+      return
+    end
 
     if state.write_queue.length == 1
       buffer = state.write_queue.first
@@ -736,7 +738,7 @@ class GlobalSpace
           state.context.node_id
         reset_connection state.context
       else
-        @ev_loop.remove_io_events state.watcher, :w
+        @ev_loop.remove_io_events watcher, :w
       end
 
     rescue Errno::EINTR  # might be raised by write_nonblock
@@ -746,7 +748,8 @@ class GlobalSpace
       $log.info "SSL renegotiation: write_data to %p (node %d): " +
         "IO::WaitReadable", sock, state.context.node_id
       state.ssl_io = :write_needs_readable
-      @ev_loop.set_io_events sock.__connection.watcher, :r
+      # It shouldn't be necessary to enable :r monitoring, but it doesn't hurt.
+      @ev_loop.add_io_events watcher, :r
 
     # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
     # plain Errno::EWOULDBLOCK, so technically we could get rid of
