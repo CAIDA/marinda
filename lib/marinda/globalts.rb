@@ -41,7 +41,6 @@
 require 'ostruct'
 
 require 'eva'
-
 require 'mioext'
 require 'marinda/list'
 require 'marinda/msgcodes'
@@ -57,18 +56,18 @@ class GlobalSpaceEventLoop
 
   SIGNAL_INTERVAL = 5.0 # seconds between checks for signals
 
-  def initialize(ev_loop, config, server_connection, space)
-    @ev_loop = ev_loop
+  def initialize(eva_loop, config, server_connection, space)
+    @eva_loop = eva_loop
     @config = config
     @server_connection = server_connection
     @space = space  # must not be nil
 
-    @ev_loop.add_repeating_timer SIGNAL_INTERVAL, &method(:check_signals)
-    @ev_loop.add_io server_connection.sock, :r,
+    @eva_loop.add_repeating_timer SIGNAL_INTERVAL, &method(:check_signals)
+    @eva_loop.add_io server_connection.sock, :r,
       &method(:handle_incoming_connection)
 
-#     @ev_loop.add_repeating_timer 5.0 do
-#       @ev_loop.instance_variable_get("@watchers").each_with_index do |w, i|
+#     @eva_loop.add_repeating_timer 5.0 do
+#       @eva_loop.instance_variable_get("@watchers").each_with_index do |w, i|
 #         $log.debug "  %3d: %p", i, w
 #       end
 #     end
@@ -77,7 +76,7 @@ class GlobalSpaceEventLoop
 
   private #..................................................................
 
-  # Eva callback for periodic timer.
+  # Eva callback for repeating timer.
   def check_signals(watcher)
     if $checkpoint_state
       $checkpoint_state = false
@@ -90,7 +89,7 @@ class GlobalSpaceEventLoop
       $log.info "checkpointing state and exiting on SIGTERM/SIGINT."
       @space.checkpoint_state()
       $log.info "exiting after checkpoint upon request."
-      @ev_loop.stop()
+      @eva_loop.stop()
     end
 
     if $reload_config
@@ -119,7 +118,7 @@ class GlobalSpaceEventLoop
     if client_sock
       if @config.use_ssl && peer_ip != "127.0.0.1"
         conn = AcceptingSSLConnection.new client_sock, peer_ip, node_id
-        conn.watcher = @ev_loop.add_io client_sock, :r,
+        conn.watcher = @eva_loop.add_io client_sock, :r,
           &method(:handle_ssl_accept)
         conn.watcher.user_data = conn
       else
@@ -138,7 +137,7 @@ class GlobalSpaceEventLoop
       # By this point, either the accept succeeded, or we got an error like
       # a post connection failure.  In either case, we'll never need to try
       # accepting again, so clean up.
-      @ev_loop.remove_io watcher
+      @eva_loop.remove_io watcher
 
       client_sock = accepting_connection.sock
       if ssl
@@ -154,16 +153,16 @@ class GlobalSpaceEventLoop
       # nothing to do; we'll automatically retry
 
     rescue IO::WaitReadable
-      @ev_loop.set_io_events watcher, :r
+      @eva_loop.set_io_events watcher, :r
 
     rescue IO::WaitWritable
-      @ev_loop.set_io_events watcher, :w
+      @eva_loop.set_io_events watcher, :w
     end
   end
 
 
   def setup_connection(client_sock, ssl, node_id)
-    watcher = @ev_loop.add_io client_sock, :r
+    watcher = @eva_loop.add_io client_sock, :r
     watcher.user_data = ssl
     @space.setup_connection ssl, node_id, watcher
   end
@@ -418,8 +417,8 @@ class GlobalSpace
 
   #------------------------------------------------------------------------
 
-  def initialize(ev_loop, state_db_path)
-    @ev_loop = ev_loop
+  def initialize(eva_loop, state_db_path)
+    @eva_loop = eva_loop
     @global_state = GlobalState.new state_db_path
 
     @services = {}
@@ -578,7 +577,7 @@ class GlobalSpace
       context.sock = nil
       if sock
         $log.info "purging existing connection with node %d", node_id        
-        @ev_loop.remove_io sock.__connection.watcher
+        @eva_loop.remove_io sock.__connection.watcher
 
         # Because we enabled SSL sync_close, closing the SSL socket will
         # also close the underlying socket if we're using SSL.
@@ -674,7 +673,7 @@ class GlobalSpace
       $log.info "SSL renegotiation: read_data from %p (node %d): " +
         "IO::WaitWritable", sock, state.context.node_id
       state.ssl_io = :read_needs_writable
-      @ev_loop.add_io_events watcher, :w
+      @eva_loop.add_io_events watcher, :w
 
     rescue SocketError, IOError, EOFError,SystemCallError,OpenSSL::SSL::SSLError
       $log.info "read_data from %p (node %d): %p",
@@ -708,7 +707,7 @@ class GlobalSpace
     # Handle any SSL renegotiation in progress.
     if state.ssl_io == :read_needs_writable
       state.ssl_io == nil
-      @ev_loop.remove_io_events watcher, :w if state.write_queue.empty?
+      @eva_loop.remove_io_events watcher, :w if state.write_queue.empty?
       on_io_read watcher
       return
     end
@@ -740,7 +739,7 @@ class GlobalSpace
           state.context.node_id
         reset_connection state.context
       else
-        @ev_loop.remove_io_events watcher, :w
+        @eva_loop.remove_io_events watcher, :w
       end
 
     rescue Errno::EINTR  # might be raised by write_nonblock
@@ -751,7 +750,7 @@ class GlobalSpace
         "IO::WaitReadable", sock, state.context.node_id
       state.ssl_io = :write_needs_readable
       # It shouldn't be necessary to enable :r monitoring, but it doesn't hurt.
-      @ev_loop.add_io_events watcher, :r
+      @eva_loop.add_io_events watcher, :r
 
     # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
     # plain Errno::EWOULDBLOCK, so technically we could get rid of
@@ -777,7 +776,7 @@ class GlobalSpace
 
     sock.close rescue nil
     sock.__connection_state = :defunct
-    @ev_loop.remove_io sock.__connection.watcher
+    @eva_loop.remove_io sock.__connection.watcher
     sock.__connection.watcher = nil
     sock.__connection = nil
   end
@@ -1130,7 +1129,7 @@ class GlobalSpace
     state.write_queue << message
     # Note: Don't send unacked_messages until negotiations are over.
 
-    @ev_loop.add_io_events state.watcher, :w
+    @eva_loop.add_io_events state.watcher, :w
   end
 
 
@@ -1173,7 +1172,7 @@ class GlobalSpace
     state = context.sock.__connection
     if context.sock && context.sock.__connection_state == :connected
       state.write_queue << marshal_message(context, message)
-      @ev_loop.add_io_events state.watcher, :w
+      @eva_loop.add_io_events state.watcher, :w
     end
     context.unacked_messages << message
   end
