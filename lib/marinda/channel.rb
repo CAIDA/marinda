@@ -109,12 +109,13 @@ class Channel
 
   private #================================================================
 
-  def initialize(flags, space, public_port, private_port, sock)
-    $log.info "created channel %#x (pubp=%#x, privp=%#x)", object_id,
-      public_port, private_port
+  def initialize(flags, client_id, space, public_port, private_port, sock)
+    $log.info "created channel %d @ %#x (pubp=%#x, privp=%#x)", client_id,
+      object_id, public_port, private_port
     @flags = flags  # ChannelFlags
     @flags.is_global = Port.global? public_port
     @flags.is_commons = Port.commons? public_port
+    @client_id = client_id
     @space = space
 
     @public_port = public_port
@@ -292,9 +293,13 @@ class Channel
       raise ChannelProtocolUnsupportedError,
        "protocol version not supported; must be >= 3 and <= #{PROTOCOL_VERSION}"
     else
+      name_len = @space.node_name.length
+      banner = "Marinda Ruby local server v#{Marinda::VERSION}"
+      banner_len = banner.length
       @protocol = [ PROTOCOL_VERSION, client_protocol ].min
-      send reqnum, "CCNa*", HELLO_RESP, @protocol, @flags.flags,
-        "Marinda Ruby local server v#{Marinda::VERSION}"
+      send reqnum, "CCNNGnna#{name_len}na#{banner_len}", HELLO_RESP, @protocol,
+        @flags.flags, @client_id, @space.run_id, @space.node_id,
+        name_len, @space.node_name, banner_len, banner
     end
   end
 
@@ -875,7 +880,7 @@ class Channel
   # LocalSpace when shutting down the local server.
   def shutdown
     return unless @sock
-    $log.info "Channel %#x: shutting down", object_id
+    $log.info "channel %d @ %#x: shutting down", @client_id, object_id
     cancel_active_command()
     @space.unregister_channel self
 

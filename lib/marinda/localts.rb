@@ -45,6 +45,8 @@ module Marinda
 
 class LocalSpace
 
+  attr_reader :run_id, :node_id, :node_name
+
   private
 
   include Socket::Constants
@@ -61,7 +63,11 @@ class LocalSpace
     @server_sock.__connection_state = :listening
     @server_sock.__connection = nil
 
+    @client_id = 0
+    @run_id = generate_run_id()  # float value of 48-bit int
     @node_id = @config.node_id
+    @node_name = @config.node_name
+    $log.info "node %d (%s); run %x", @node_id, @node_name, @run_id
 
     @last_public_portnum = Port::PUBLIC_PORTNUM_RESERVED
     @last_private_portnum = Port::PRIVATE_PORTNUM_RESERVED
@@ -96,6 +102,25 @@ class LocalSpace
     @write_set = []
     @readable = nil
     @writable = nil
+  end
+
+
+  # Generates a run ID that can be used in turn to generate globally unique
+  # application-level IDs by clients of the local server.  The range of
+  # this value should be large enough to make accidental collisions
+  # unlikely (even taking the birthday paradox into account) but not so
+  # large as to produce values that are inconvenient to use as part of
+  # longer application-level IDs.
+  #
+  # WARNING: The run ID should NEVER be used for any authentication or
+  #          cryptographic purposes.  It isn't unpredictable or unguessable
+  #          enough (by design).
+  #
+  # This returns a double so that we can properly transmit the 48-bit integer
+  # in a portable manner (the 'Q' and 'q' Array#pack options use native byte
+  # order).
+  def generate_run_id
+    rand(281474976710656).to_f  # [0, 2**48-1] => 12 hex digits
   end
 
 
@@ -340,7 +365,8 @@ class LocalSpace
       private_port = allocate_private_port
       @regions[private_port] = Region.new self, private_port
 
-      channel = Channel.new flags, self, @commons_port, private_port, sock
+      channel = Channel.new flags, next_client_id(), self,
+        @commons_port, private_port, sock
       @channels[private_port] << channel
 
       sock.extend ConnectionState
@@ -393,7 +419,8 @@ class LocalSpace
     sockets = UNIXSocket.pair SOCK_STREAM, 0
     return nil unless sockets
 
-    channel = Channel.new flags, self, public_port, private_port, sockets[0]
+    channel = Channel.new flags, next_client_id(), self,
+      public_port, private_port, sockets[0]
     @channels[private_port] << channel
 
     sockets[0].extend ConnectionState
@@ -437,6 +464,13 @@ class LocalSpace
 
   def find_region(port)
     @regions[port]
+  end
+
+
+  def next_client_id
+    @client_id += 1
+    @client_id = 0 if @client_id > 2_147_483_647  # == 2**31 - 1
+    @client_id
   end
 
 

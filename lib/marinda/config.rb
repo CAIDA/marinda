@@ -179,7 +179,7 @@ end
 
 class LocalConfig < ConfigBase
 
-  attr_reader :socket, :socket_access, :node_id, :localspace_only
+  attr_reader :socket, :socket_access, :node_id, :node_name, :localspace_only
   attr_reader :global_server_addr, :global_server_port
   attr_reader :use_ssl, :check_server_name, :cert, :key, :ca_file, :ca_path
   attr_reader :use_judy
@@ -203,6 +203,11 @@ class LocalConfig < ConfigBase
     if @node_id <= 0 || @node_id > 2**15
       raise MalformedConfigException, "invalid 'node_id': " +
         "must be >= 1 and <= " + (2**15).to_s
+    end
+
+    import_optional config, "node_name", String
+    unless @node_name
+      @node_name = sprintf "Node_%d", @node_id
     end
 
     import_optional config, "localspace_only", TrueClass

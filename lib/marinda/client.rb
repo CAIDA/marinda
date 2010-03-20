@@ -70,9 +70,13 @@ class Client
 
   ReadBuffer = Struct.new :length, :payload
 
-  attr_accessor :remote_banner, :debug
+  attr_reader :client_id, :run_id, :node_id, :node_name, :remote_banner
+  attr_accessor :debug
 
   def initialize(sock)
+    # A sequence number used to construct globally unique application-level IDs.
+    @id = 0
+
     # This attribute contains the request number used in the last *sent*
     # message rather than containing the next *available* reqnum.   Thus,
     # we must increment the attribute before sending a new message.  The
@@ -265,7 +269,16 @@ class Client
 
     case code
     when HELLO_RESP
-      return payload.unpack("CCNa*")  # command, protocol, flags, message
+      # command, protocol, flags, client_id, run_id, node_id,
+      # (len, node_name), (len, banner)
+      fields = payload.unpack("CCNNGna*")
+      rest = fields.pop
+      while rest.length > 0
+        len, rest = rest.unpack("na*")
+        txt, rest = rest.unpack("a#{len}a*")
+        fields << txt
+      end
+      return fields
 
     when ACK_RESP
       return payload.unpack("C")   # command
@@ -405,8 +418,12 @@ class Client
       "Marinda Ruby client v#{Marinda::VERSION}"
 
     response = receive HELLO_RESP
-    @protocol, @flags, @remote_banner = response[1..3]
-    return "#{@remote_banner} (proto: #{@protocol})"
+    response.shift
+    @protocol, @flags, @client_id, @run_id, @node_id, @node_name,
+      @remote_banner = response
+    @run_id = @run_id.to_i
+    return "client #{@client_id}: node #{@node_id} (#{@node_name}): " +
+      "#{@remote_banner} (proto: #{@protocol}; run_id=#{@run_id})"
   end
 
 
@@ -634,6 +651,12 @@ class Client
     channel = receive_channel
     channel.hello
     channel
+  end
+
+
+  def gen_id
+    @id += 1
+    sprintf "%x:%x:%x", @id, @client_id, @run_id
   end
 
 
