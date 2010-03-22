@@ -39,10 +39,17 @@ require 'optparse'
 require 'marinda'
 require 'marinda/verboseclient'
 
+Thread.abort_on_exception = true
+
 $options = OpenStruct.new
-$options.clear = false
+$options.port = 7000
 
 opts = OptionParser.new
+
+opts.on("--port", "=NUM", Integer,
+        "region port to use (#{$options.port})") do |v|
+  $options.port = v
+end
 
 opts.on("--[no-]mperio", TrueClass,  "use rb-mperio for the event loop") do |v|
   $options.mperio = v
@@ -127,13 +134,14 @@ SOCKET = "/tmp/localts-test.sock"
 s = UNIXSocket.open SOCKET
 $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c.hello
-$c2 = Marinda::VerboseClient.new($c.duplicate, "c2")
-$g = Marinda::VerboseClient.new $c.global_commons, "g"
-$g2 = Marinda::VerboseClient.new($g.duplicate, "g2")
+$c1 = Marinda::VerboseClient.new($c.open_port($options.port), "c1")
+$c2 = Marinda::VerboseClient.new($c.open_port($options.port), "c2")
+$g1 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g1")
+$g2 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g2")
 
-$loop.add_source $c
+$loop.add_source $c1
 #$loop.add_source $c2
-$loop.add_source $g
+$loop.add_source $g1
 #$loop.add_source $g2
 
 if $options.verbose
@@ -455,23 +463,23 @@ end
 
 puts "\n\n==[ local ]=======================================================\n"
 
-test_every_read_all_async "local commons", $c
+test_every_read_all_async "local region", $c1
 
 # The remaining tests may use read_all, so read_all should be correct by now.
 
-test_every_take_all_async "local commons", $c
-test_every_monitor_async "local commons", $c, $c2
-test_every_consume_async "local commons", $c, $c2
-test_every_monitor_stream_async "local commons", $c, $c2
-test_every_consume_stream_async "local commons", $c, $c2
+test_every_take_all_async "local region", $c1
+test_every_monitor_async "local region", $c1, $c2
+test_every_consume_async "local region", $c1, $c2
+test_every_monitor_stream_async "local region", $c1, $c2
+test_every_consume_stream_async "local region", $c1, $c2
 
 puts "\n\n==[ global ]======================================================\n"
 
-test_every_take_all_async "global commons", $g
-test_every_read_all_async "global commons", $g
-test_every_monitor_async "global commons", $g, $g2
-test_every_consume_async "global commons", $g, $g2
-test_every_monitor_stream_async "global commons", $g, $g2
-test_every_consume_stream_async "global commons", $g, $g2
+test_every_take_all_async "global region", $g1
+test_every_read_all_async "global region", $g1
+test_every_monitor_async "global region", $g1, $g2
+test_every_consume_async "global region", $g1, $g2
+test_every_monitor_stream_async "global region", $g1, $g2
+test_every_consume_stream_async "global region", $g1, $g2
 
 puts "\n\n### SUCCESS."

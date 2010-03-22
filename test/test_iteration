@@ -32,18 +32,46 @@ $: << "../ext"
 
 require 'thread'
 require 'socket'
+require 'ostruct'
+require 'optparse'
+
 require 'marinda'
 require 'marinda/verboseclient'
 
 Thread.abort_on_exception = true
 
+$options = OpenStruct.new
+$options.port = 7000
+
+opts = OptionParser.new
+
+opts.on("--port", "=NUM", Integer,
+        "region port to use (#{$options.port})") do |v|
+  $options.port = v
+end
+
+opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
+  $options.verbose = v
+end
+
+begin
+  ARGV.replace opts.parse(*ARGV)
+rescue OptionParser::ParseError
+  $stderr.puts "ERROR: " + $!.to_s
+  $stderr.puts opts
+  exit 1
+end
+
+#===========================================================================
+
 SOCKET = "/tmp/localts-test.sock"
 s = UNIXSocket.open SOCKET
 $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c.hello
-$c2 = Marinda::VerboseClient.new($c.duplicate, "c2")
-$g = Marinda::VerboseClient.new $c.global_commons, "g"
-$g2 = Marinda::VerboseClient.new($g.duplicate, "g2")
+$c1 = Marinda::VerboseClient.new($c.open_port($options.port), "c1")
+$c2 = Marinda::VerboseClient.new($c.open_port($options.port), "c2")
+$g1 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g1")
+$g2 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g2")
 
 def assert_equal(x, y)
   unless x == y
@@ -351,23 +379,23 @@ end
 
 puts "\n\n==[ local ]=======================================================\n"
 
-test_every_read_all "local commons", $c
+test_every_read_all "local region", $c1
 
 # The remaining tests may use read_all, so read_all should be correct by now.
 
-test_every_take_all "local commons", $c
-test_every_monitor "local commons", $c, $c2
-test_every_consume "local commons", $c, $c2
-test_every_monitor_stream "local commons", $c, $c2
-test_every_consume_stream "local commons", $c, $c2
+test_every_take_all "local region", $c1
+test_every_monitor "local region", $c1, $c2
+test_every_consume "local region", $c1, $c2
+test_every_monitor_stream "local region", $c1, $c2
+test_every_consume_stream "local region", $c1, $c2
 
 puts "\n\n==[ global ]======================================================\n"
 
-test_every_take_all "global commons", $g
-test_every_read_all "global commons", $g
-test_every_monitor "global commons", $g, $g2
-test_every_consume "global commons", $g, $g2
-test_every_monitor_stream "global commons", $g, $g2
-test_every_consume_stream "global commons", $g, $g2
+test_every_take_all "global region", $g1
+test_every_read_all "global region", $g1
+test_every_monitor "global region", $g1, $g2
+test_every_consume "global region", $g1, $g2
+test_every_monitor_stream "global region", $g1, $g2
+test_every_consume_stream "global region", $g1, $g2
 
 puts "\n\n### SUCCESS."

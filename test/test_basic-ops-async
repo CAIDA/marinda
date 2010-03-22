@@ -37,10 +37,18 @@ require 'optparse'
 require 'marinda'
 require 'marinda/verboseclient'
 
+Thread.abort_on_exception = true
+
 $options = OpenStruct.new
+$options.port = 7000
 $options.clear = false
 
 opts = OptionParser.new
+
+opts.on("--port", "=NUM", Integer,
+        "region port to use (#{$options.port})") do |v|
+  $options.port = v
+end
 
 opts.on("--[no-]clear", TrueClass,
 	"clear regions before test (#{$options.clear})") do |v|
@@ -61,16 +69,13 @@ end
 
 #===========================================================================
 
-
-Thread.abort_on_exception = true
-
 SOCKET = "/tmp/localts-test.sock"
 s = UNIXSocket.open SOCKET
 $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c.hello
-$g = Marinda::VerboseClient.new $c.global_commons, "g"
-$local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
-$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g456")
+$c2 = Marinda::VerboseClient.new($c.open_port($options.port), "c2")
+$g2 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g2")
+
 
 $loop = Marinda::ClientEventLoop.new
 
@@ -176,32 +181,22 @@ end
 
 #############################################################################
 
-clear $c if $options.clear
-test_basic_operations $c, "local commons"
+clear $c2 if $options.clear
+test_basic_operations $c2, "local region"
 
-clear $local_123 if $options.clear
-test_basic_operations $local_123, "local region 123"
-
-clear $g if $options.clear
-test_basic_operations $g, "global commons"
-
-clear $global_456 if $options.clear
-test_basic_operations $global_456, "global region 456"
+clear $g2 if $options.clear
+test_basic_operations $g2, "global region"
 
 #===========================================================================
 
 def test_event_loop_multi_source
   puts "\n::: testing multiple sources :::"
 
-  $loop.add_source $c
-  $loop.add_source $local_123
-  $loop.add_source $g
-  $loop.add_source $global_456
+  $loop.add_source $c2
+  $loop.add_source $g2
 
-  clear $c
-  clear $local_123
-  clear $g
-  clear $global_456
+  clear $c2
+  clear $g2
   test_event_loop_multi_source_populate()
   test_event_loop_multi_source_execute :read_async
   test_event_loop_multi_source_execute :readp_async
@@ -210,36 +205,24 @@ def test_event_loop_multi_source
   test_event_loop_multi_source_populate()
   test_event_loop_multi_source_execute :takep_async
 
-  $loop.remove_source $c
-  $loop.remove_source $local_123
-  $loop.remove_source $g
-  $loop.remove_source $global_456
+  $loop.remove_source $c2
+  $loop.remove_source $g2
 end
 
 
 def test_event_loop_multi_source_populate
-  $c.write ["c", 1, 2, 3]
-  $local_123 .write ["local_123", 4, 5, 6]
-  $g.write ["g", 7, 8, 9]
-  $global_456 .write ["global_456", 10, 11, 12]
+  $c2 .write ["c2", 4, 5, 6]
+  $g2 .write ["g2", 10, 11, 12]
 end
 
 
 def test_event_loop_multi_source_execute(operation)
-  $c.__send__ operation, [] do |tuple|
-    assert_equal(tuple, ["c", 1, 2, 3])
+  $c2.__send__ operation, [] do |tuple|
+    assert_equal(tuple, ["c2", 4, 5, 6])
   end
 
-  $local_123.__send__ operation, [] do |tuple|
-    assert_equal(tuple, ["local_123", 4, 5, 6])
-  end
-
-  $g.__send__ operation, [] do |tuple|
-    assert_equal(tuple, ["g", 7, 8, 9])
-  end
-
-  $global_456.__send__ operation, [] do |tuple|
-    assert_equal(tuple, ["global_456", 10, 11, 12])
+  $g2.__send__ operation, [] do |tuple|
+    assert_equal(tuple, ["g2", 10, 11, 12])
   end
   
   $loop.start
@@ -247,6 +230,5 @@ end
 
 
 test_event_loop_multi_source()
-
 
 puts "\n\n### SUCCESS."

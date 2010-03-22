@@ -1,0 +1,15 @@
+#!/bin/sh
+
+PORT=${1:-7000}
+
+while true
+do
+  sleep 1
+  date
+  ./test_basic-ops --port=$PORT --clear || exit
+  ./test_basic-ops-async --port=$PORT --clear || exit
+  ./test_iteration --port=$PORT || exit
+  ./test_iteration-async --port=$PORT || exit
+  ./test_stream2 --port=$PORT || exit
+done
+

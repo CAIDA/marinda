@@ -36,10 +36,18 @@ require 'optparse'
 require 'marinda'
 require 'marinda/verboseclient'
 
+Thread.abort_on_exception = true
+
 $options = OpenStruct.new
+$options.port = 7000
 $options.clear = false
 
 opts = OptionParser.new
+
+opts.on("--port", "=NUM", Integer,
+        "region port to use (#{$options.port})") do |v|
+  $options.port = v
+end
 
 opts.on("--[no-]clear", TrueClass,
 	"clear regions before test (#{$options.clear})") do |v|
@@ -60,16 +68,12 @@ end
 
 #===========================================================================
 
-
-Thread.abort_on_exception = true
-
 SOCKET = "/tmp/localts-test.sock"
 s = UNIXSocket.open SOCKET
 $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c.hello
-$g = Marinda::VerboseClient.new $c.global_commons, "g"
-$local_123 = Marinda::VerboseClient.new($c.open_port(123), "l123")
-$global_456 = Marinda::VerboseClient.new($c.open_port(456), "g456")
+$c2 = Marinda::VerboseClient.new($c.open_port($options.port), "c2")
+$g2 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g2")
 
 if $options.verbose
   Marinda::Client.debug = true
@@ -142,16 +146,10 @@ def test_basic_operations(ts, descr)
 
 end
 
-clear $c if $options.clear
-test_basic_operations $c, "local commons"
+clear $c2 if $options.clear
+test_basic_operations $c2, "local region"
 
-clear $local_123 if $options.clear
-test_basic_operations $local_123, "local region 123"
-
-clear $g if $options.clear
-test_basic_operations $g, "global commons"
-
-clear $global_456 if $options.clear
-test_basic_operations $global_456, "global region 456"
+clear $g2 if $options.clear
+test_basic_operations $g2, "global region"
 
 puts "\n\n### SUCCESS."
