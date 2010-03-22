@@ -173,7 +173,8 @@ class LocalSpaceEventLoop
         $log.info "opened connection to global server %s", @global_server_addr
         if @config.use_ssl
           @ssl_watcher = nil
-          @ssl_connection = nil
+          @ssl_connection =
+            Marinda::ClientSSLConnection.new @global_server_addr, sock
           establish_ssl_connection()
         else
           setup_mux_connection sock, sock
@@ -203,13 +204,10 @@ class LocalSpaceEventLoop
 
 
   def establish_ssl_connection(_ignore=nil)
+    sock = @ssl_connection.sock
     begin
       $log.info "trying to establish SSL with global server %s",
         @global_server_addr
-      unless @ssl_connection
-        @ssl_connection =
-          Marinda::ClientSSLConnection.new @global_server_addr, sock
-      end
       ssl = @ssl_connection.connect
 
       # By this point, either the connect succeeded, or we got an error
@@ -222,7 +220,7 @@ class LocalSpaceEventLoop
       if ssl
         $log.info "established SSL connection with global server"
         ssl.sync_close = true
-        setup_mux_connection @connection.sock, ssl
+        setup_mux_connection sock, ssl
       else
         schedule_next_connection_attempt()
       end
@@ -241,7 +239,7 @@ class LocalSpaceEventLoop
         @eva_loop.set_io_events @ssl_watcher, events
       else
         # Keep executing establish_ssl_connection() until we succeed or fail.
-        @ssl_watcher = @eva_loop.add_io @connection.sock, events,
+        @ssl_watcher = @eva_loop.add_io sock, events,
           &method(:establish_ssl_connection)
       end
     end
