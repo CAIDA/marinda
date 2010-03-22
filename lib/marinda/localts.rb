@@ -147,18 +147,18 @@ class LocalSpaceEventLoop
   def connect_to_global_server(_ignore=nil)
     begin
       unless @connection
+        # Save off the hostname and port from @config to guard against
+        # config changes during the full connection attempt.
+        @global_server_addr = @config.global_server_addr
+        @global_server_port = @config.global_server_port
         @connection =
-          Marinda::InsecureClientConnection.new @config.global_server_addr, 
-            @config.global_server_port
+          Marinda::InsecureClientConnection.new @global_server_addr, 
+            @global_server_port
       end
 
-      # Log the hostname and port from @connection and not from @config,
-      # since the config might have changed between the start of the
-      # connection attempt.
       $log.info "trying to connect to global server %s, port %d",
-        @connection.host, @connection.port
+        @global_server_addr, @global_server_port
       sock = @connection.connect
-      host = @connection.host
 
       # By this point, either we opened a connection, or the connection
       # attempt failed (and we need to retry later), so remove the watcher
@@ -167,10 +167,10 @@ class LocalSpaceEventLoop
       # attempt).
       @eva_loop.remove_io @connect_watcher
       @connect_watcher = nil
-      @connection = nil
+      @connection = nil # force next attempt to get addr & port from config
 
       if sock
-        $log.info "opened connection to global server %s", host
+        $log.info "opened connection to global server %s", @global_server_addr
         if @config.use_ssl
           @ssl_watcher = nil
           @ssl_connection = nil
@@ -204,10 +204,11 @@ class LocalSpaceEventLoop
 
   def establish_ssl_connection(_ignore=nil)
     begin
-      $log.info "trying to establish SSL with global server"
+      $log.info "trying to establish SSL with global server %s",
+        @global_server_addr
       unless @ssl_connection
         @ssl_connection =
-          Marinda::ClientSSLConnection.new @connection.host, sock
+          Marinda::ClientSSLConnection.new @global_server_addr, sock
       end
       ssl = @ssl_connection.connect
 
