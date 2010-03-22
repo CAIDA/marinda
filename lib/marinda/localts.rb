@@ -233,7 +233,7 @@ class LocalSpaceEventLoop
         $log.debug "SSL connect_nonblock raised %s", msg
       end
 
-      events = ($! === IO::WaitReadable ? :r : :w)
+      events = (IO::WaitReadable === $! ? :r : :w)
       if @ssl_watcher
         @eva_loop.set_io_events @ssl_watcher, events
       else
