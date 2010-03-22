@@ -35,8 +35,7 @@ require 'syslog'
 require 'socket'
 require 'yaml'
 
-require 'eva'  # needed to use OpenSSL on Ruby < 1.9.2
-
+require 'eva'  # also provides OpenSSL on Ruby < 1.9.2
 require 'marinda/utils'
 require 'marinda/config'
 require 'marinda/globalmux'
@@ -193,8 +192,15 @@ exit_status = 0
 
 begin
   $log.info "waiting for clients on %s", config.socket
-  space = Marinda::LocalSpace.new config, server_sock
-  space.execute  # returns on exit request triggered by a signal
+  eva_loop = Eva::Loop.default
+  mux = (config.localspace_only ? nil :
+         Marinda::GlobalSpaceMux.new(config.node_id))
+  space = Marinda::LocalSpace.new eva_loop, config.node_id, config.node_name,mux
+  ls_loop = Marinda::LocalSpaceEventLoop.new eva_loop, config, server_sock,
+    space, mux
+  eva_loop.delegate = ls_loop
+  eva_loop.run()  # only returns on exit request triggered by a signal
+
   File.delete config.socket
 
 rescue

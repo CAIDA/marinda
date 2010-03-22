@@ -66,7 +66,7 @@ class Client
   REQNUM_MAX = 2**8 - 1
 
   MESSAGE_LENGTH_SIZE = 2  # num bytes in length field of client msg
-  READ_SIZE = 8192         # num bytes to read at once with sysread
+  READ_SIZE = 16384        # num bytes to read at once with sysread
 
   ReadBuffer = Struct.new :length, :payload
 

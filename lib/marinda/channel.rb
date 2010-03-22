@@ -54,7 +54,7 @@ class Channel
   PEER_HANDLE_MAX = 2**31 - 1   # max value storable with Array#pack("N")
 
   CLIENT_MESSAGE_LENGTH_SIZE = 2  # num bytes in length field of client msg
-  READ_SIZE = 8192   # num bytes to read at once with sysread
+  READ_SIZE = 16384   # num bytes to read at once with sysread
 
   ReadBuffer = Struct.new :length, :payload, :want_io
   WriteBuffer = Struct.new :payload, :file
@@ -105,13 +105,14 @@ class Channel
   # cancelled by the client.
   IterationState = Struct.new :template, :cursor, :request
   
-  attr_reader :sock, :flags, :public_port, :private_port
+  attr_reader :connected, :flags, :public_port, :private_port
 
   private #================================================================
 
-  def initialize(flags, client_id, space, public_port, private_port, sock)
+  def initialize(flags, client_id, space, public_port, private_port, watcher)
     $log.info "created channel %d @ %#x (pubp=%#x, privp=%#x)", client_id,
       object_id, public_port, private_port
+    @connected = true
     @flags = flags  # ChannelFlags
     @flags.is_global = Port.global? public_port
     @flags.is_commons = Port.commons? public_port
@@ -123,7 +124,7 @@ class Channel
     @peer_port = @public_port
     @address_book = []  # handle - FIRST_USER_HANDLE => private peer port
 
-    @sock = sock
+    @watcher = watcher
     @protocol = 0
 
     # State for read and write directions of the client socket; @read_buffer
@@ -662,6 +663,7 @@ class Channel
     length = [ payload.length ].pack "n"
     message = length + payload
     @write_queue << WriteBuffer[message, fd]
+    @watcher.loop.add_io_events @watcher, :w
   end
 
 
@@ -680,40 +682,26 @@ class Channel
 
   public #==================================================================
 
-  # Called by the select loop in LocalSpace -------------------------------
-
-  def need_io_read
-    @sock != nil
-  end
-
-
-  def need_io_write
-    @sock && !@write_queue.empty?
-  end
-
-
-  # I/O events from LocalSpace --------------------------------------------
+  # I/O events from LocalSpaceEventLoop -----------------------------------
 
   # NOTE: This only works with Unix domain sockets, not general TCP sockets.
-  def read_data(timestamp)
-    return unless @sock  # still connected
-
+  def read_data(sock, timestamp)
     shutdown_connection = false
     @messages.clear  # [ [payload, file] ]
     @read_buffer.payload ||= ""
 
     begin
       if @read_buffer.want_io
-	fd = @sock.recv_io
+	fd = sock.recv_io
 	raise EOFError, "client protocol error: no file descriptor" unless fd
 	@messages << [@read_buffer.payload, fd]
 	@read_buffer.length = nil
 	@read_buffer.payload = ""
 	@read_buffer.want_io = nil
       else
-	data = @sock.read_nonblock READ_SIZE
+	data = sock.read_nonblock READ_SIZE
         $log.debug "Channel#read_data from %p: %p",
-          @sock, data if $debug_client_io_bytes
+          sock, data if $debug_client_io_bytes
 
 	start = 0
 	while start < data.length
@@ -771,14 +759,14 @@ class Channel
       # IO::WaitReadable shouldn't normally happen since the socket was
       # ready by the time we performed the read_nonblock; however, a false
       # readiness notification can lead to this exception.
-      $log.info "Channel#read_data from %p: IO::WaitReadable", @sock
-      # do nothing, since we'll automatically retry in the next select() round
+      $log.info "Channel#read_data from %p: IO::WaitReadable", sock
+      # do nothing, since we'll automatically retry
 
     # in `recv_io': file descriptor was not passed
     # (msg_controllen : 0 != 16) (SocketError)
     rescue SocketError, IOError, EOFError, SystemCallError
       if $debug_client_io_bytes || !$!.kind_of?(EOFError)
-        $log.info "Channel#read_data from %p: %p", @sock, $!
+        $log.info "Channel#read_data from %p: %p", sock, $!
       end
 
       # Don't immediately shutdown because there may be messages read from
@@ -803,47 +791,46 @@ class Channel
     rescue ChannelPrivilegeError
       $log.debug "Channel#handle_client_message raised %p", $!
       send_error reqnum, ERRORSUB_NO_PRIVILEGE, $!.to_s
-      shutdown()
+      shutdown sock
 
     rescue ChannelProtocolUnsupportedError
       $log.debug "Channel#handle_client_message raised %p", $!
       send_error reqnum, ERRORSUB_PROTOCOL_NOT_SUPPORTED, $!.to_s
-      shutdown()
+      shutdown sock
 
     rescue ChannelError
       $log.info "Channel#handle_client_message raised %p", $!
       $log.info "Channel active_command=%p", @active_command
-      shutdown()
+      shutdown sock
 
     else
-      shutdown() if shutdown_connection
+      shutdown sock if shutdown_connection
     end
   end
 
 
   # NOTE: This only works with Unix domain sockets, not general TCP sockets.
-  def write_data(timestamp)
-    return unless @sock  # still connected
-
+  def write_data(sock, timestamp)
+    return if @write_queue.empty?  # nothing to do -- spurious write readiness
     buffer = @write_queue.first
 
     begin
       if buffer.payload.length > 0
-	n = @sock.write_nonblock buffer.payload
+	n = sock.write_nonblock buffer.payload
 	data_written = buffer.payload.slice! 0, n
         if $debug_client_io_bytes
           $log.debug "Channel#write_data to %p: wrote %d bytes, %d left: %p",
-            @sock, n, buffer.payload.length, data_written
+            sock, n, buffer.payload.length, data_written
         end
       end
 
       if buffer.payload.length == 0 && buffer.file
         $log.debug "Channel#write_data passing file %p over %p",
-          buffer.file, @sock if $debug_client_io_bytes
+          buffer.file, sock if $debug_client_io_bytes
 
-	@sock.send_io buffer.file
+	sock.send_io buffer.file
         $log.debug "Channel#write_data sent file %p over %p",
-          buffer.file, @sock if $debug_client_io_bytes
+          buffer.file, sock if $debug_client_io_bytes
 
         # XXX Should we close the file here??  Is there a race condition,
         #     with the client possibly receiving a closed file descriptor?
@@ -852,9 +839,10 @@ class Channel
       end
 
       @write_queue.shift if buffer.payload.length == 0 && buffer.file == nil
+      @watcher.loop.remove_io_events @watcher, :w if @write_queue.empty?
 
     rescue Errno::EINTR  # might be raised by write_nonblock
-      # do nothing, since we'll automatically retry in the next select() round
+      # do nothing, since we'll automatically retry
 
     # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
     # plain Errno::EWOULDBLOCK, so technically we could get rid of
@@ -863,24 +851,26 @@ class Channel
       # IO::WaitWritable shouldn't normally happen since the socket was
       # ready by the time we performed the write_nonblock; however, a false
       # readiness notification can lead to this exception.
-      $log.info "Channel#write_data to %p: IO::WaitWritable", @sock
-      # do nothing, since we'll automatically retry in the next select() round
+      $log.info "Channel#write_data to %p: IO::WaitWritable", sock
+      # do nothing, since we'll automatically retry
 
     # syswrite may throw "not opened for writing (IOError)";
     rescue SocketError, IOError, SystemCallError # including Errno::EPIPE
       if $debug_client_io_bytes || !$!.kind_of?(Errno::EPIPE)
-        $log.info "Channel#write_data to %p: %p", @sock, $!
+        $log.info "Channel#write_data to %p: %p", sock, $!
       end
-      shutdown()
+      shutdown sock
     end
   end
 
 
   # Called by self on EOF or some I/O error with the client, or by
   # LocalSpace when shutting down the local server.
-  def shutdown
-    return unless @sock
+  def shutdown(sock)
+    return unless @connected
+
     $log.info "channel %d @ %#x: shutting down", @client_id, object_id
+    @connected = false
     cancel_active_command()
     @space.unregister_channel self
 
@@ -892,8 +882,9 @@ class Channel
     end
     @write_queue.clear
 
-    @sock.close rescue nil
-    @sock = nil
+    @watcher.loop.remove_io @watcher
+    @watcher = nil
+    sock.close rescue nil
   end
 
 
@@ -950,8 +941,8 @@ class Channel
   # -----------------------------------------------------------------------
 
   def inspect
-    sprintf "\#<Marinda::Channel:%#x @public_port=%#x, " +
-      "@private_port=%#x>", object_id, @public_port, @private_port
+    sprintf "\#<Marinda::Channel:%#x @client_id=%d, @public_port=%#x, " +
+      "@private_port=%#x>", object_id, @client_id, @public_port, @private_port
   end
 
 end

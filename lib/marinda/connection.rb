@@ -151,7 +151,7 @@ class InsecureClientConnection
 
  include Socket::Constants
 
-  attr_reader :sock
+  attr_reader :host, :port, :sock
   attr_accessor :need_io
 
   def initialize(host, port)

@@ -38,14 +38,14 @@ module Marinda
 
 class GlobalSpaceMux
 
-  attr_reader :sock, :last_activity_time
+  attr_reader :watcher, :last_activity_time
 
   private
 
   include MuxMessageCodes
 
   MESSAGE_LENGTH_SIZE = 4  # num bytes in length field of transmitted messages
-  READ_SIZE = 8192         # num bytes to read at once with sysread
+  READ_SIZE = 16384        # num bytes to read at once with sysread
 
   class GlobalSpaceRequest
     attr_reader :worker, :result_method, :request_data
@@ -92,13 +92,16 @@ class GlobalSpaceMux
     # receives the actual session ID in HELLO_RESP.
     @session_id = 0
 
-    @sock = nil        # open socket to demux or nil if lost connection
     @protocol = nil
     @remote_banner = nil
 
+    # The watcher for the connection to the global server (or nil if not
+    # connected).
+    @watcher = nil
+
     # The timestamp of the last successful read_nonblock/write_nonblock call.
     # This is used by LocalSpace to check for the heartbeat timeout.
-    @last_activity_time = nil
+    @last_activity_time = Time.now.to_f
 
     # The next available sequence number (that is, use this value in a
     # message and then post increment the variable).
@@ -449,7 +452,11 @@ class GlobalSpaceMux
         "contents=%p", message.seqnum, message.command, message.contents
     end
 
-    @write_queue << marshal_message(message) if @sock
+    if @watcher  # connected to global server?
+      @write_queue << marshal_message(message)
+      @watcher.loop.add_io_events @watcher, :w
+    end
+
     @unacked_messages << message
     @ongoing_requests[message.seqnum] = message
   end
@@ -457,22 +464,11 @@ class GlobalSpaceMux
 
   public #===================================================================
 
-  # Called by the select loop in LocalSpace -------------------------------
+  # I/O events from LocalSpaceEventLoop -----------------------------------
 
-  def need_io_read
-    @sock != nil
-  end
-
-
-  def need_io_write
-    @sock && !@write_queue.empty?
-  end
-
-
-  # I/O events from LocalSpace --------------------------------------------
-
-  def setup_connection(sock)
-    @sock = sock
+  def setup_connection(watcher)
+    @watcher = watcher
+    @write_queue.clear
     @write_queue << generate_hello_message()
     @unacked_messages.each do |message|
       @write_queue << marshal_message(message)
@@ -480,22 +476,23 @@ class GlobalSpaceMux
   end
 
 
-  def schedule_heartbeat(timestamp)
-    @write_queue << generate_heartbeat_message(timestamp) if @write_queue.empty?
+  def enqueue_heartbeat(timestamp)
+    if @write_queue.empty?
+      @write_queue << generate_heartbeat_message(timestamp)
+      @watcher.loop.add_io_events @watcher, :w
+    end
   end
 
 
-  def read_data(timestamp)
-    return unless @sock  # still connected
-
+  def read_data(sock, timestamp)
     @messages.clear
     @read_buffer.payload ||= ""
 
     begin
-      data = @sock.read_nonblock READ_SIZE
+      data = sock.read_nonblock READ_SIZE
       @last_activity_time = timestamp
       if $debug_mux_io_bytes
-        $log.debug "GlobalSpaceMux#read_data from %p: %p", @sock, data
+        $log.debug "GlobalSpaceMux#read_data from %p: %p", sock, data
       end
 
       start = 0
@@ -544,17 +541,17 @@ class GlobalSpaceMux
       # IO::WaitReadable shouldn't normally happen since the socket was
       # ready by the time we performed the read_nonblock; however, a false
       # readiness notification can lead to this exception.
-      $log.info "GlobalSpaceMux#read_data from %p: IO::WaitReadable", @sock
-      # do nothing, since we'll automatically retry in the next select() round
+      $log.info "GlobalSpaceMux#read_data from %p: IO::WaitReadable", sock
+      # do nothing, since we'll automatically retry
 
     rescue SocketError, IOError, EOFError,SystemCallError,OpenSSL::SSL::SSLError
       if $debug_mux_io_bytes || !$!.kind_of?(EOFError)
-        $log.info "GlobalSpaceMux#read_data from %p: %p", @sock, $!
+        $log.info "GlobalSpaceMux#read_data from %p: %p", sock, $!
       end
 
       # Because we reset the connection on EOF, we don't allow half closing
       # of sockets.
-      reset_connection()
+      reset_connection sock
     end
 
     @messages.each do |payload|
@@ -563,29 +560,30 @@ class GlobalSpaceMux
   end
 
 
-  def write_data(timestamp)
-    return unless @sock  # still connected
-
+  def write_data(sock, timestamp)
     if @write_queue.length == 1
       buffer = @write_queue.first
-    else # @write_queue.length > 1
+    elsif @write_queue.length > 1
       buffer = @write_queue.join nil
       @write_queue.clear
       @write_queue << buffer
+    else  # @write_queue.length == 0 
+      return  # nothing to do -- spurious write readiness
     end
 
     begin
       while buffer.length > 0
-        n = @sock.write_nonblock buffer
+        n = sock.write_nonblock buffer
         data_written = buffer.slice! 0, n
         @last_activity_time = timestamp
         if $debug_mux_io_bytes
           $log.debug "GlobalSpaceMux#write_data to %p: wrote %d bytes, " +
-            "%d left: %p", @sock, n, buffer.length, data_written
+            "%d left: %p", sock, n, buffer.length, data_written
         end
       end
 
       @write_queue.shift
+      @watcher.loop.remove_io_events @watcher, :w
 
     rescue Errno::EINTR  # might be raised by write_nonblock
       # do nothing, since we'll automatically retry in the next select() round
@@ -597,26 +595,27 @@ class GlobalSpaceMux
       # IO::WaitWritable shouldn't normally happen since the socket was
       # ready by the time we performed the write_nonblock; however, a false
       # readiness notification can lead to this exception.
-      $log.info "GlobalSpaceMux#write_data to %p: IO::WaitWritable", @sock
-      # do nothing, since we'll automatically retry in the next select() round
+      $log.info "GlobalSpaceMux#write_data to %p: IO::WaitWritable", sock
+      # do nothing, since we'll automatically retry
 
     # syswrite may throw "not opened for writing (IOError)"
     rescue SocketError, IOError, SystemCallError, OpenSSL::SSL::SSLError
       if $debug_mux_io_bytes || !$!.kind_of?(Errno::EPIPE)
-        $log.info "GlobalSpaceMux#write_data to %p: %p", @sock, $!
+        $log.info "GlobalSpaceMux#write_data to %p: %p", sock, $!
       end
-      reset_connection()
+      reset_connection sock
     end
   end
 
 
-  def reset_connection
-    return unless @sock
-
-    @sock.close rescue nil
-    @sock = nil
+  def reset_connection(sock)
+    $log.info "lost connection with global server"
     @read_buffer = ReadBuffer.new
     @write_queue.clear
+    @watcher.loop.remove_io @watcher
+    @watcher = nil
+    sock.close rescue nil
+    raise GlobalSpaceConnectionLost
   end
 
 

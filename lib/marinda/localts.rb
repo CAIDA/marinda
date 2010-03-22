@@ -36,12 +36,274 @@
 
 require 'ostruct'
 
+require 'eva'
 require 'mioext'
 require 'marinda/port'
 require 'marinda/region'
 require 'marinda/channel'
 
 module Marinda
+
+class GlobalSpaceConnectionLost < IOError; end
+
+class LocalSpaceEventLoop
+
+  SIGNAL_INTERVAL = 5.0 # seconds between checks for signals
+  RECONNECT_DELAY = 60 # seconds between attempts to connect to global server
+  RECONNECT_JITTER = 30 # seconds of random jitter added to delay
+
+  # The coarse check interval and the unpredictableness of the last activity
+  # time combine to help reduce synchronized heartbeats across nodes.
+  HEARTBEAT_INTERVAL = 16.0 # seconds between checks for heartbeat
+  HEARTBEAT_TIMEOUT = 30 # seconds from last read/write activity to global serv
+
+  def initialize(eva_loop, config, server_sock, space, mux)
+    @eva_loop = eva_loop
+    @config = config
+    @server_sock = server_sock  # Unix domain socket for LocalSpace
+    @server_sock.extend ConnectionState
+    @server_sock.__connection_state = :listening
+    @server_sock.__connection = nil
+    @space = space  # must not be nil
+    @mux = mux  # must not be nil unless @config.localspace_only
+
+    @eva_loop.add_repeating_timer SIGNAL_INTERVAL, &method(:check_signals)
+    @eva_loop.add_io server_sock, :r, &method(:handle_incoming_connection)
+
+#     @eva_loop.add_repeating_timer 5.0 do
+#       @eva_loop.instance_variable_get("@watchers").each_with_index do |w, i|
+#         $log.debug "  %3d: %p", i, w
+#       end
+#     end
+
+    unless @config.localspace_only
+      @connection = nil
+      @connect_watcher = nil  # temporary watcher for performing connect()
+      connect_to_global_server()
+
+      @eva_loop.add_repeating_timer HEARTBEAT_INTERVAL do
+        if @mux.watcher &&
+            @eva_loop.now - @mux.last_activity_time >= HEARTBEAT_TIMEOUT
+          @mux.enqueue_heartbeat @eva_loop.now
+        end
+      end
+    end
+  end
+
+
+  private #..................................................................
+
+  # Eva callback for repeating timer.
+  def check_signals(watcher)
+    if $shutdown_requested
+      $shutdown_requested = false
+      $log.info "exiting by request."
+
+      # XXX cleanly shut down all client connections and the
+      #     global tuple space connection
+      @eva_loop.stop()
+    end
+
+    if $reload_config
+      $reload_config = false
+      $log.info "reloading config file on SIGHUP."
+      begin
+        config = Marinda::LocalConfig.new $options.config_path
+        config.export_debugging_flags()
+        $log.debug "%p", config if $options.verbose
+        @config = config
+      rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
+        msg = $!.class.name + ": " + $!.to_s
+        $log.err "ERROR: couldn't load new config from '%s': %s; " +
+          "backtrace: %s", $options.config_path, msg,
+        $!.backtrace.join(" <= ")
+      end
+    end
+  end
+
+
+  # Eva callback for @server_sock becoming readable.
+  def handle_incoming_connection(_ignore=nil)
+    begin
+      sock = @server_sock.accept_nonblock
+      sock.extend ConnectionState
+      sock.__connection_state = :connected
+
+      watcher = @eva_loop.add_io sock, :r
+      watcher.user_data = sock  # needed by io_on_read/io_on_write
+      @space.handle_incoming_connection watcher, sock
+
+    # not sure EINTR is raised by accept_nonblock
+    rescue Errno::EINTR, Errno::EWOULDBLOCK, IO::WaitReadable
+      # nothing to do; the local server always retries
+
+    rescue
+      $log.err "LocalSpace#handle_incoming_connection: accept_nonblock " +
+        "failed: %p", $!
+    end
+  end
+
+
+  def connect_to_global_server(_ignore=nil)
+    begin
+      unless @connection
+        @connection =
+          Marinda::InsecureClientConnection.new @config.global_server_addr, 
+            @config.global_server_port
+      end
+
+      # Log the hostname and port from @connection and not from @config,
+      # since the config might have changed between the start of the
+      # connection attempt.
+      $log.info "trying to connect to global server %s, port %d",
+        @connection.host, @connection.port
+      sock = @connection.connect
+      host = @connection.host
+
+      # By this point, either we opened a connection, or the connection
+      # attempt failed (and we need to retry later), so remove the watcher
+      # and purge the connection object (which allows any changes in the
+      # hostname or port of the global server to take effect on the next
+      # attempt).
+      @eva_loop.remove_io @connect_watcher
+      @connect_watcher = nil
+      @connection = nil
+
+      if sock
+        $log.info "opened connection to global server %s", host
+        if @config.use_ssl
+          @ssl_watcher = nil
+          @ssl_connection = nil
+          establish_ssl_connection()
+        else
+          setup_mux_connection sock, sock
+        end
+      else
+        schedule_next_connection_attempt()
+      end
+
+    # not sure EINTR can be raised by connect_nonblock;
+    # IO::WaitReadable is never raised.
+    # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
+    # plain Errno::EINPROGRESS, so technically we could get rid of
+    # IO::WaitWritable.
+    rescue Errno::EINTR, Errno::EINPROGRESS, IO::WaitWritable
+      if $debug_io_select
+        msg = $!.class.name + ": " + $!.to_s
+        $log.debug "non-SSL connect_nonblock raised %s", msg
+      end
+
+      # Keep executing connect_to_global_server() until we succeed or fail.
+      unless @connect_watcher
+        @connect_watcher = @eva_loop.add_io @connection.sock, :w,
+          &method(:connect_to_global_server)
+      end
+    end
+  end
+
+
+  def establish_ssl_connection(_ignore=nil)
+    begin
+      $log.info "trying to establish SSL with global server"
+      unless @ssl_connection
+        @ssl_connection =
+          Marinda::ClientSSLConnection.new @connection.host, sock
+      end
+      ssl = @ssl_connection.connect
+
+      # By this point, either the connect succeeded, or we got an error
+      # like a post connection failure.  In either case, we'll never try
+      # connecting again with the current SSL connection object, so clean up.
+      @eva_loop.remove_io @ssl_watcher
+      @ssl_watcher = nil
+      @ssl_connection = nil
+
+      if ssl
+        $log.info "established SSL connection with global server"
+        ssl.sync_close = true
+        setup_mux_connection @connection.sock, ssl
+      else
+        schedule_next_connection_attempt()
+      end
+
+    rescue Errno::EINTR  # not sure EINTR can be raised by connect_nonblock
+      # do nothing; we'll automatically retry
+
+    rescue IO::WaitReadable, IO::WaitWritable
+      if $debug_io_select
+        msg = $!.class.name + ": " + $!.to_s
+        $log.debug "SSL connect_nonblock raised %s", msg
+      end
+
+      events = ($! === IO::WaitReadable ? :r : :w)
+      if @ssl_watcher
+        @eva_loop.set_io_events @ssl_watcher, events
+      else
+        # Keep executing establish_ssl_connection() until we succeed or fail.
+        @ssl_watcher = @eva_loop.add_io @connection.sock, events,
+          &method(:establish_ssl_connection)
+      end
+    end
+  end
+
+
+  def schedule_next_connection_attempt
+    delay = RECONNECT_DELAY + rand(RECONNECT_JITTER)
+    $log.debug "next connection attempt at %s",
+      Time.at(@eva_loop.now + delay).to_s
+    @eva_loop.add_timer delay, &method(:connect_to_global_server)
+  end
+
+
+  def setup_mux_connection(client_sock, ssl)
+    watcher = @eva_loop.add_io client_sock, :rw
+    watcher.user_data = ssl  # needed by io_on_read/io_on_write
+    ssl.__connection = @mux
+    @mux.setup_connection watcher
+  end
+
+
+  def on_io_read(watcher)
+    # Don't use watcher.io because it stores the underlying IO object used
+    # for polling and not the SSL socket wrapping the client connection
+    # when SSL is being used.
+    sock = watcher.user_data
+
+    # We must guard against a socket becoming defunct in the same round of
+    # select() processing.
+    return unless sock.__connection_state == :connected
+
+    # Dispatch to Channel or GlobalSpaceMux.
+    begin
+      sock.__connection.read_data sock, @eva_loop.now
+    rescue GlobalSpaceConnectionLost
+      connect_to_global_server()
+    end
+  end
+
+
+  def on_io_write(watcher)
+    # Don't use watcher.io because it stores the underlying IO object used
+    # for polling and not the SSL socket wrapping the client connection
+    # when SSL is being used.
+    sock = watcher.user_data
+
+    # We must guard against a socket becoming defunct in the same round of
+    # select() processing.
+    return unless sock.__connection_state == :connected
+
+    # Dispatch to Channel or GlobalSpaceMux.
+    begin
+      sock.__connection.write_data sock, @eva_loop.now
+    rescue GlobalSpaceConnectionLost
+      connect_to_global_server()
+    end
+  end
+
+end
+
+
+#==========================================================================
 
 class LocalSpace
 
@@ -51,22 +313,14 @@ class LocalSpace
 
   include Socket::Constants
 
-  TIMEOUT = 5 # seconds of timeout for select
-  RECONNECT_DELAY = 60 # seconds between attempts to connect to global server
-  RECONNECT_JITTER = 30 # seconds of random jitter added to delay
-  HEARTBEAT_TIMEOUT = 30 # seconds from last read/write activity to global serv
-
-  def initialize(config, server_sock)
-    @config = config
-    @server_sock = server_sock
-    @server_sock.extend ConnectionState
-    @server_sock.__connection_state = :listening
-    @server_sock.__connection = nil
+  def initialize(eva_loop, node_id, node_name, mux)
+    @eva_loop = eva_loop
+    @node_id = node_id
+    @node_name = node_name
+    @mux = mux
 
     @client_id = 0
     @run_id = generate_run_id()  # float value of 48-bit int
-    @node_id = @config.node_id
-    @node_name = @config.node_name
     $log.info "node %d (%s); run %x", @node_id, @node_name, @run_id
 
     @last_public_portnum = Port::PUBLIC_PORTNUM_RESERVED
@@ -81,27 +335,6 @@ class LocalSpace
     # private port => [ Channel ]
     @channels = Hash.new { |hash, key| hash[key] = Array.new }
     @services = {}
-
-    if @config.localspace_only
-      @mux = nil
-      @connection = nil
-      @ssl_connection = nil
-    else
-      @mux = Marinda::GlobalSpaceMux.new @node_id
-      @connection = Marinda::InsecureClientConnection.new @config.global_server_addr, @config.global_server_port
-      @ssl_connection = nil
-    end
-
-    # The timestamp of the next attempt at connecting to the global server.
-    @next_connection_attempt = nil
-
-    # IO sets to pass to Kernel::select, and IO sets returned by
-    # select.  We use instance variables so that it is easier to inspect
-    # a core dump with gdb.
-    @read_set = []
-    @write_set = []
-    @readable = nil
-    @writable = nil
   end
 
 
@@ -126,262 +359,22 @@ class LocalSpace
 
   public  #..................................................................
 
-  # The main event loop, handling new client connections, requests on
-  # established client connections, and message exchange with the global
-  # tuple space.
-  #
-  # This is called by the marinda-ls script, and any exceptions are caught
-  # and reported there.
-  def execute
-    loop do
-      @read_set.clear
-      @write_set.clear
+  # Called by LocalSpaceEventLoop for each new client connection.
+  def handle_incoming_connection(watcher, sock)
+    flags = ChannelFlags.new
+    flags.allow_commons_privileges!
+    private_port = allocate_private_port()
+    @regions[private_port] = Region.new self, private_port
 
-      @read_set << @server_sock
+    channel = Channel.new flags, next_client_id(), self,
+      @commons_port, private_port, watcher
+    @channels[private_port] << channel
 
-      unless @config.localspace_only
-        @loop_timestamp = Time.now.to_i
-        if @mux.sock  # connection fully established
-          @read_set << @mux.sock if @mux.need_io_read
-          if @mux.need_io_write
-            @write_set << @mux.sock
-          else
-            if @loop_timestamp - @mux.last_activity_time > HEARTBEAT_TIMEOUT
-              @mux.schedule_heartbeat @loop_timestamp
-              @write_set << @mux.sock
-            end
-          end
-        elsif @ssl_connection  # TCP connected, but trying to establish SSL
-          case @ssl_connection.need_io
-          when :read then @read_set << @ssl_connection.sock
-          when :write then @write_set << @ssl_connection.sock
-          else
-            fail "INTERNAL ERROR: unhandled @ssl_connection.need_io=%p",
-              @ssl_connection.need_io
-          end
-        else # @connection != nil  # disconnected, or trying to connect
-          case @connection.need_io
-          when :connect
-            unless @next_connection_attempt &&
-                @loop_timestamp < @next_connection_attempt
-              connect_to_global_server()
-
-              # An optimization to speed up the connection attempt.  Under
-              # normal circumstances, the above attempt to connect will
-              # block on write, and so we can immediately put the socket
-              # in the write set.
-              @write_set << @connection.sock if @connection.need_io == :write
-            end
-
-          when :write  # waiting for connect_nonblock to finish
-            @write_set << @connection.sock
-
-          when :none
-            # If :none, then we were at least connected to the global server
-            # without SSL.  So either the SSL connection attempt failed, or
-            # we got disconnected after being fully connected (that is,
-            # the GlobalSpaceMux detected a connection loss and cleared
-            # @mux.sock).
-            schedule_next_connection_attempt() unless @next_connection_attempt
-            @connection.reset()
-
-          else
-            fail "INTERNAL ERROR: unhandled @connection.need_io=%p",
-              @connection.need_io
-          end
-        end
-      end
-
-      @channels.each_value do |cs|
-        cs.each do |channel|
-          @read_set << channel.sock if channel.need_io_read
-          @write_set << channel.sock if channel.need_io_write
-        end
-      end
-
-      if $debug_io_select
-        $log.debug "LocalSpace: waiting for I/O ..."
-        $log.debug "select read_set (%d fds): %p", @read_set.length, @read_set
-        $log.debug "select write_set (%d fds): %p", @write_set.length,@write_set
-      end
-
-      # XXX select can throw "closed stream (IOError)" if a write file
-      #     descriptor has been closed previously; we may want to catch
-      #     this exception and remove the closed descriptor.  Strictly
-      #     speaking, users shouldn't be passing in closed file descriptors.
-      @readable, @writable = select @read_set, @write_set, nil, TIMEOUT
-      if $debug_io_select
-        $log.debug "select returned %d readable, %d writable",
-          (@readable ? @readable.length : 0), (@writable ? @writable.length : 0)
-      end
-
-      if @readable
-        @readable.each do |sock|
-          $log.debug "readable %p", sock if $debug_io_select
-          case sock.__connection_state
-          when :connected then sock.__connection.read_data @loop_timestamp
-          when :listening then handle_incoming_connection()
-          when :ssl_connecting then establish_ssl_connection()
-          when :defunct  # nothing to do
-          when :connecting
-            msg = sprintf "INTERNAL ERROR: __connection_state=:connecting " +
-              "for readable %p", sock
-            fail msg
-          else
-            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
-              "for readable %p", sock.__connection_state, sock
-            fail msg
-          end
-        end
-      end
-
-      if @writable
-        @writable.each do |sock|
-          $log.debug "writable %p", sock if $debug_io_select
-          case sock.__connection_state
-          when :connected then sock.__connection.write_data @loop_timestamp
-          when :connecting then connect_to_global_server()
-          when :ssl_connecting then establish_ssl_connection()
-          when :defunct  # nothing to do
-          when :listening
-            msg = sprintf "INTERNAL ERROR: __connection_state=:listening " +
-              "for writable %p", sock
-            fail msg
-          else
-            msg = sprintf "INTERNAL ERROR: unknown __connection_state=%p " +
-              "for writable %p", sock.__connection_state, sock
-            fail msg
-          end
-        end
-      end
-
-      if $shutdown_requested
-        $shutdown_requested = false
-        $log.info "exiting by request."
-        # XXX cleanly shut down all client connections and the
-        #     global tuple space connection
-        return
-      end
-
-      if $reload_config
-        $reload_config = false
-        $log.info "reloading config file on SIGHUP."
-        begin
-          config = Marinda::LocalConfig.new $options.config_path
-          config.export_debugging_flags()
-          $log.debug "%p", config if $options.verbose
-          @config = config
-        rescue # Marinda::ConfigBase::MalformedConfigException & YAML exceptions
-          msg = $!.class.name + ": " + $!.to_s
-          $log.err "ERROR: couldn't load new config from '%s': %s; " +
-            "backtrace: %s", $options.config_path, msg,
-            $!.backtrace.join(" <= ")
-        end
-      end
-    end
+    sock.__connection = channel
   end
 
 
   private  #.................................................................
-
-  def connect_to_global_server
-    begin
-      $log.info "trying to connect to global server %s",
-        @config.global_server_addr
-      sock = @connection.connect
-      if sock
-        $log.info "opened connection to global server %s",
-          @config.global_server_addr
-        @next_connection_attempt = nil
-        if @config.use_ssl
-          @ssl_connection = Marinda::ClientSSLConnection.new @config.global_server_addr, sock
-        else
-          sock.__connection = @mux
-          @mux.setup_connection sock
-        end
-      else
-        schedule_next_connection_attempt()
-      end
-
-    # not sure EINTR can be raised by connect_nonblock;
-    # IO::WaitReadable is never raised.
-    # Ruby 1.9.2 preview 2 uses IO::WaitWritable, but earlier versions use
-    # plain Errno::EINPROGRESS, so technically we could get rid of
-    # IO::WaitWritable.
-    rescue Errno::EINTR, Errno::EINPROGRESS, IO::WaitWritable
-      # do nothing; we'll automatically retry in next select round
-      if $debug_io_select
-        msg = $!.class.name + ": " + $!.to_s
-        $log.debug "non-SSL connect_nonblock raised %s", msg
-      end
-    end
-  end
-
-
-  def establish_ssl_connection
-    begin
-      $log.info "trying to establish SSL with global server"
-      sock = @ssl_connection.connect
-
-      # By this point, either the connect succeeded, or we got an error
-      # like a post connection failure.  In either case, we'll never try
-      # connecting again with the current connection object, so clean up.
-      @ssl_connection = nil
-
-      if sock
-        $log.info "established SSL connection with global server"
-        @next_connection_attempt = nil
-        sock.__connection = @mux
-        @mux.setup_connection sock
-      else
-        schedule_next_connection_attempt()
-      end
-
-    # not sure EINTR can be raised by connect_nonblock
-    rescue Errno::EINTR, IO::WaitReadable, IO::WaitWritable
-      # do nothing; we'll automatically retry in next select round
-      if $debug_io_select
-        msg = $!.class.name + ": " + $!.to_s
-        $log.debug "SSL connect_nonblock raised %s", msg
-      end
-    end
-  end
-
-
-  def schedule_next_connection_attempt
-    @next_connection_attempt = @loop_timestamp + RECONNECT_DELAY +
-      rand(RECONNECT_JITTER)
-    $log.debug "next connection attempt at %s",
-      Time.at(@next_connection_attempt).to_s
-  end
-
-
-  def handle_incoming_connection
-    begin
-      sock = @server_sock.accept_nonblock
-
-      flags = ChannelFlags.new
-      flags.allow_commons_privileges!
-      private_port = allocate_private_port
-      @regions[private_port] = Region.new self, private_port
-
-      channel = Channel.new flags, next_client_id(), self,
-        @commons_port, private_port, sock
-      @channels[private_port] << channel
-
-      sock.extend ConnectionState
-      sock.__connection_state = :connected
-      sock.__connection = channel
-
-    rescue Errno::EWOULDBLOCK, Errno::EINTR  # not sure EINTR is raised
-      # nothing to do; the local server always retries
-
-    rescue
-      $log.err "LocalSpace#handle_incoming_connection: accept_nonblock " +
-        "failed: %p", $!
-    end
-  end
-
 
   def handle_shutdown(command)
     fail "UNIMPLEMENTED"
@@ -389,7 +382,7 @@ class LocalSpace
 
 
   def forward_message(command, channel, *args)
-    if channel.sock
+    if channel.connected
       channel.__send__ command, *args
     else
       $log.info "LocalSpace#forward_message: discarding message %p to " +
@@ -399,7 +392,7 @@ class LocalSpace
       when :binding_created, :channel_duplicated, :port_opened
 	new_channel, client_sock = args
 	if new_channel
-	  new_channel.shutdown
+	  new_channel.shutdown()
 	  client_sock.close rescue nil
 	end
       else
@@ -419,8 +412,10 @@ class LocalSpace
     sockets = UNIXSocket.pair SOCK_STREAM, 0
     return nil unless sockets
 
+    watcher = @eva_loop.add_io sockets[0], :r
+    watcher.user_data = sockets[0]  # needed by io_on_read/io_on_write
     channel = Channel.new flags, next_client_id(), self,
-      public_port, private_port, sockets[0]
+      public_port, private_port, watcher
     @channels[private_port] << channel
 
     sockets[0].extend ConnectionState
@@ -573,7 +568,7 @@ class LocalSpace
 
 
   def mux_result(port, request, result)
-    if request.channel.sock
+    if request.channel.connected
       request.channel.region_result port, request.operation,
         request.template, result
     # else XXX possibly return taken tuple into region
@@ -693,7 +688,7 @@ class LocalSpace
   # Note: We could simply use forward_message, but inlining
   #       channel.region_result call might be faster.
   def region_result(port, channel, operation, template, tuple)
-    if channel.sock
+    if channel.connected
       channel.region_result port, operation, template, tuple
     else
       $log.info "LocalSpace#region_result: discarding message to " +
