@@ -206,8 +206,7 @@ class LocalSpaceEventLoop
   def establish_ssl_connection(_ignore=nil)
     sock = @ssl_connection.sock
     begin
-      $log.info "trying to establish SSL with global server %s",
-        @global_server_addr
+      $log.info "trying to establish SSL with global server"
       ssl = @ssl_connection.connect
 
       # By this point, either the connect succeeded, or we got an error
