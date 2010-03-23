@@ -120,6 +120,7 @@ module MuxMessageCodes
 
   # Protocol 3:
   #  * switched to using MIO (instead of YAML) for encoding tuples/templates
+  #  * added HEARTBEAT_RESP
   #
   # Protocol 2b:
   #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
@@ -169,7 +170,8 @@ module MuxMessageCodes
     2 => :ACK_RESP,
     3 => :PORT_RESP,
     4 => :TUPLE_RESP,
-    5 => :TUPLE_NIL_RESP
+    5 => :TUPLE_NIL_RESP,
+    6 => :HEARTBEAT_RESP
   }
 
   DEMUX_RESPONSES.each do |value, key|

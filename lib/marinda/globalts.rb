@@ -979,9 +979,8 @@ class GlobalSpace
 
     when HEARTBEAT_CMD
       timestamp = arguments[0]
-      $log.info "[%s] received heartbeat from node %d, sent %d (%s)",
-        Time.now.to_s, context.node_id, timestamp, Time.at(timestamp).to_s
-      # don't send ACK_RESP
+      $log.debug "heartbeat from node %d, sent %d", context.node_id, timestamp
+      enq_heartbeat_message context, timestamp
 
     when HELLO_CMD
       protocol, hello_node_id, hello_session_id, banner = arguments
@@ -1132,6 +1131,17 @@ class GlobalSpace
     # Note: Don't send unacked_messages until negotiations are over.
 
     @eva_loop.add_io_events state.watcher, :w
+  end
+
+
+  #--------------------------------------------------------------------------
+
+  # {timestamp} should be the timestamp included in the heartbeat from a node.
+  def enq_heartbeat_message(context, timestamp)
+    # command, command_seqnum, timestamp
+    contents = [ HEARTBEAT_RESP, 0, timestamp ].pack("CwN")
+    message = marshal_hello_contents contents
+    enq_hello_message context, message
   end
 
 

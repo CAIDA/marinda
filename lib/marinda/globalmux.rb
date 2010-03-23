@@ -218,6 +218,9 @@ class GlobalSpaceMux
     when PORT_RESP
       return payload.unpack("ww")  # command_seqnum, port
 
+    when HEARTBEAT_RESP
+      return payload.unpack("wN")  # command_seqnum, timestamp
+
     when HELLO_RESP
       command_seqnum, protocol, rest = payload.unpack("wNa*")
       if protocol == 0
@@ -265,9 +268,10 @@ class GlobalSpaceMux
 
     # Ignore outdated responses following command cancellation; for example,
     # a tuple response to a cancelled monitor.
-    return unless message || response_code == HELLO_RESP
+    return unless message || response_code == HELLO_RESP ||
+      response_code == HEARTBEAT_RESP
 
-    unless response_code == HELLO_RESP
+    unless response_code == HELLO_RESP || response_code == HEARTBEAT_RESP
       # We don't delete the request seqnum mapping for stream operations
       # because stream operations remain in place in the global server
       # until explicitly cancelled.  All other operations (singleton and
@@ -307,6 +311,10 @@ class GlobalSpaceMux
                      request.operation == :consume_stream
         request.worker.mux_result request.port, request, *arguments
       end
+
+    when HEARTBEAT_RESP
+      timestamp = arguments[0]
+      $log.debug "heartbeat ack for %d", timestamp
 
     when HELLO_RESP
       @protocol, hello_node_id, hello_session_id, @remote_banner = arguments
