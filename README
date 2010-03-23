@@ -1,1 +1,43 @@
-A new tuple space implementation.
+============================================================================
+
+                      Marinda Tuple Space
+
+----------------------------------------------------------------------------
+
+Marinda is a distributed tuple space developed by Young Hyun at CAIDA
+(http://www.caida.org) as part of the Archipelago (Ark) measurement
+infrastructure (http://www.caida.org/projects/ark/).
+
+See the docs subdirectory for installation and programming guides:
+
+   docs/installation.html
+   docs/client-programming.html
+
+
+----------------------------------------------------------------------------
+Requirements
+----------------------------------------------------------------------------
+
+You must install the following Ruby gems:
+
+  * amalgalite
+  * eva
+  * rjudy (optional, but strongly recommended)
+
+For example,
+
+ $ sudo gem install amalgalite
+
+will download, build, and install the Amalgalite gem from the gem
+repository of the Ruby community.
+
+
+----------------------------------------------------------------------------
+Acknowledgments
+----------------------------------------------------------------------------
+
+This project is sponsored by the U.S. Department of Homeland Security
+(DHS) Science and Technology (S&T) Directorate via Contract
+N66001-08-C-2029, "Science and Technology of Internet Mapping", and by
+the National Science Foundation via grant CRI 0551542,
+"Community-oriented Network Measurement Infrastructure."
