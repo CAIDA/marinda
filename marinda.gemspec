@@ -1,7 +1,5 @@
 #!/usr/bin/env ruby
 
-# $Id: marinda.gemspec,v 1.8 2009/03/09 07:27:42 youngh Exp $
-
 require 'rubygems'
 require 'fileutils'
 

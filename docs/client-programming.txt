@@ -1,7 +1,6 @@
 Client Programming Guide
 ========================
 _ _
-$Id: client-programming.txt,v 1.15 2009/03/17 03:11:48 youngh Exp $
 
 == Overview
 

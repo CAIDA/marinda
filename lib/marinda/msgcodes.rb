@@ -3,7 +3,9 @@
 ## and between the local and global servers.
 ##
 ## --------------------------------------------------------------------------
-## Copyright (C) 2007, 2008, 2009 The Regents of the University of California.
+## Author: Young Hyun
+## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
+## California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -29,7 +31,8 @@ module Marinda
 module ChannelMessageCodes
 
   # Protocol 3:
-  #  * switched to using MIO (instead of YAML) for encoding tuples
+  #  * switched to using MIO (instead of YAML) for encoding tuples/templates
+  #  * HELLO_RESP returns more info: client_id, run_id, node_id, node_name
   #
   # Protocol 2b:
   #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
@@ -116,7 +119,7 @@ end
 module MuxMessageCodes
 
   # Protocol 3:
-  #  * switched to using MIO (instead of YAML) for encoding tuples
+  #  * switched to using MIO (instead of YAML) for encoding tuples/templates
   #
   # Protocol 2b:
   #  * added TAKE_ALL_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD

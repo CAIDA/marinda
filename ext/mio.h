@@ -2,6 +2,7 @@
 ** Ruby bindings to the Marinda messaging routines.
 **
 ** --------------------------------------------------------------------------
+** Author: Young Hyun
 ** Copyright (C) 2009 Young Hyun
 ** Copyright (C) 2009 The Regents of the University of California.
 **

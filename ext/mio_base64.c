@@ -11,6 +11,7 @@
 **       expects a single long line to decode.
 **
 ** --------------------------------------------------------------------------
+** Author: Young Hyun
 ** Copyright (C) 2009 Young Hyun
 ** Copyright (C) 2009 The Regents of the University of California.
 **

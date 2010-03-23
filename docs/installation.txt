@@ -1,7 +1,6 @@
 Installation Guide
 ==================
 _ _
-$Id: installation.txt,v 1.13 2009/03/09 05:36:14 youngh Exp $
 
 == Overview
 

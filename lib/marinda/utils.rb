@@ -2,7 +2,9 @@
 ## Various utilities.
 ##
 ## --------------------------------------------------------------------------
-## Copyright (C) 2009 The Regents of the University of California.
+## Author: Young Hyun
+## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
+## California.
 ## 
 ## This file is part of Marinda.
 ## 
