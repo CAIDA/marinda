@@ -197,8 +197,26 @@ class GlobalSpaceMux
 
   def decode_response(code, payload)
     case code
-    when ERROR_RESP
-      return payload.unpack("wCa*") # command_seqnum, subcode, message
+    when ACK_RESP
+      return payload.unpack("w")  # command_seqnum
+
+    when TUPLE_RESP
+      command_seqnum, flags, sender, forwarder, seqnum, values_mio =
+	payload.unpack("wNwwwa*")
+
+      tuple = Tuple.new sender, values_mio
+      tuple.flags = flags
+      tuple.forwarder = (forwarder == 0 ? nil : forwarder)
+      tuple.seqnum = seqnum
+      return [command_seqnum, tuple]
+
+    when TUPLE_NIL_RESP
+      retval = payload.unpack("w")  # command_seqnum
+      retval << nil
+      return retval
+
+    when PORT_RESP
+      return payload.unpack("ww")  # command_seqnum, port
 
     when HELLO_RESP
       command_seqnum, protocol, rest = payload.unpack("wNa*")
@@ -215,26 +233,8 @@ class GlobalSpaceMux
       hello_node_id, hello_session_id, banner = rest.unpack("nwa*")
       return [command_seqnum, protocol, hello_node_id, hello_session_id, banner]
 
-    when ACK_RESP
-      return payload.unpack("w")  # command_seqnum
-
-    when PORT_RESP
-      return payload.unpack("ww")  # command_seqnum, port
-
-    when TUPLE_RESP
-      command_seqnum, flags, sender, forwarder, seqnum, values_mio =
-	payload.unpack("wNwwwa*")
-
-      tuple = Tuple.new sender, values_mio
-      tuple.flags = flags
-      tuple.forwarder = (forwarder == 0 ? nil : forwarder)
-      tuple.seqnum = seqnum
-      return [command_seqnum, tuple]
-
-    when TUPLE_NIL_RESP
-      retval = payload.unpack("w")  # command_seqnum
-      retval << nil
-      return retval
+    when ERROR_RESP
+      return payload.unpack("wCa*") # command_seqnum, subcode, message
 
     else
       # XXX -- fix this to fail or recover
@@ -293,8 +293,20 @@ class GlobalSpaceMux
     end
 
     case response_code
-    when ERROR_RESP
-      fail "UNIMPLEMENTED"  # XXX
+    when ACK_RESP
+      # nothing further to do
+
+    when TUPLE_RESP, TUPLE_NIL_RESP, PORT_RESP
+      request = message.request
+      if request.instance_of? GlobalSpaceRequest
+        request.worker.__send__ request.result_method, request.request_data,
+          *arguments
+      else # request.instance_of? RegionRequest
+        # Ensure unacknowledged messages don't accumulate in the global server.
+        enq_ack() if request.operation == :monitor_stream ||
+                     request.operation == :consume_stream
+        request.worker.mux_result request.port, request, *arguments
+      end
 
     when HELLO_RESP
       @protocol, hello_node_id, hello_session_id, @remote_banner = arguments
@@ -320,20 +332,8 @@ class GlobalSpaceMux
         exit 1
       end
 
-    when ACK_RESP
-      # nothing further to do
-
-    when PORT_RESP, TUPLE_RESP, TUPLE_NIL_RESP
-      request = message.request
-      if request.instance_of? GlobalSpaceRequest
-        request.worker.__send__ request.result_method, request.request_data,
-          *arguments
-      else # request.instance_of? RegionRequest
-        # Ensure unacknowledged messages don't accumulate in the global server.
-        enq_ack() if request.operation == :monitor_stream ||
-                     request.operation == :consume_stream
-        request.worker.mux_result request.port, request, *arguments
-      end
+    when ERROR_RESP
+      fail "UNIMPLEMENTED"  # XXX
 
     else
       fail "unexpected peer response code '#{response_code}'"
