@@ -7,6 +7,8 @@ version 0.13.0, 2010-03-23
     - using Mio (should have changed protocol version in v0.12.0)
     - more information is now passed back to Marinda::Client (client_id,
       run_id, node_id, node_name)
+    - the global server now responds to heartbeats, allowing the local
+      server to deduce connection status
 
 version 0.12.0, 2010-01-08
   * implemented Mio, a new high-speed serialization method that replaces
