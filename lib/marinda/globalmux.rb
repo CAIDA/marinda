@@ -101,7 +101,7 @@ class GlobalSpaceMux
     # connected).
     @watcher = nil
 
-    # The timestamp of the last successful read_nonblock/write_nonblock call.
+    # The timestamp of the last successful read_nonblock call.
     # This is used by LocalSpace to check for the heartbeat timeout.
     @last_activity_time = Time.now.to_f
 
@@ -487,7 +487,22 @@ class GlobalSpaceMux
 
 
   def enqueue_heartbeat(timestamp)
+    # If the write queue already contains something, then there's no
+    # need to send a heartbeat, since regular messages serve just as well
+    # as heartbeats to force detection of connection loss.
     if @write_queue.empty?
+      # Whenever we send a heartbeat, we need to update @last_activity_time
+      # in order to guarantee that we never send heartbeats more frequently
+      # than the heartbeat timeout.  This is because we only update
+      # @last_activity_time on successful reads, never on "successful"
+      # writes.  The write(2) system call can succeed even when a
+      # connection has been lost, so long as TCP hasn't yet detected the
+      # connection loss (which might take several minutes in the worst
+      # failure mode) and so long as there's room in the write buffer of
+      # the underlying socket.  In such a case, the write(2)'s would
+      # succeed, but nothing would be read, leading to repeated sending of
+      # heartbeats without any real benefit.
+      @last_activity_time = timestamp
       @write_queue << generate_heartbeat_message(timestamp)
       @watcher.loop.add_io_events @watcher, :w
     end
@@ -585,7 +600,6 @@ class GlobalSpaceMux
       while buffer.length > 0
         n = sock.write_nonblock buffer
         data_written = buffer.slice! 0, n
-        @last_activity_time = timestamp
         if $debug_mux_io_bytes
           $log.debug "GlobalSpaceMux#write_data to %p: wrote %d bytes, " +
             "%d left: %p", sock, n, buffer.length, data_written
