@@ -167,7 +167,7 @@ class LocalSpaceEventLoop
       # and purge the connection object (which allows any changes in the
       # hostname or port of the global server to take effect on the next
       # attempt).
-      @eva_loop.remove_io @connect_watcher
+      @eva_loop.remove_io @connect_watcher if @connect_watcher
       @connect_watcher = nil
       @connection = nil # force next attempt to get addr & port from config
 
@@ -214,7 +214,7 @@ class LocalSpaceEventLoop
       # By this point, either the connect succeeded, or we got an error
       # like a post connection failure.  In either case, we'll never try
       # connecting again with the current SSL connection object, so clean up.
-      @eva_loop.remove_io @ssl_watcher
+      @eva_loop.remove_io @ssl_watcher if @ssl_watcher
       @ssl_watcher = nil
       @ssl_connection = nil
 
