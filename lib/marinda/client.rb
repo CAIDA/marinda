@@ -270,24 +270,8 @@ class Client
     end
 
     case code
-    when HELLO_RESP
-      # command, protocol, flags, client_id, run_id, node_id,
-      # (len, node_name), (len, banner)
-      fields = payload.unpack("CCNNGna*")
-      rest = fields.pop
-      while rest.length > 0
-        len, rest = rest.unpack("na*")
-        txt, rest = rest.unpack("a#{len}a*")
-        fields << txt
-      end
-      return fields
-
     when ACK_RESP
       return payload.unpack("C")   # command
-
-    when ERROR_RESP
-      error = payload.unpack("CCa*")   # command, subcode, message
-      raise OperationError, "#{error[1]}: #{error[2]}"
 
     when TUPLE_RESP, TUPLE_WITH_RIGHTS_RESP
       tuple = MIO.decode payload[1 ... payload.length]
@@ -302,6 +286,22 @@ class Client
 
     when HANDLE_RESP
       return payload.unpack("CN")
+
+    when HELLO_RESP
+      # command, protocol, flags, client_id, run_id, node_id,
+      # (len, node_name), (len, banner)
+      fields = payload.unpack("CCNNGna*")
+      rest = fields.pop
+      while rest.length > 0
+        len, rest = rest.unpack("na*")
+        txt, rest = rest.unpack("a#{len}a*")
+        fields << txt
+      end
+      return fields
+
+    when ERROR_RESP
+      error = payload.unpack("CCa*")   # command, subcode, message
+      raise OperationError, "#{error[1]}: #{error[2]}"
     end
   end
 
