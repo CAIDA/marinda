@@ -24,12 +24,28 @@ require 'marinda'
 require 'marinda/verboseclient'
 
 $options = OpenStruct.new
+$options.port = 7000
 $options.async = true
+$options.gs = true
+$options.ls = true
 
 opts = OptionParser.new
 
+opts.on("--port", "=NUM", Integer,
+        "region port to use (#{$options.port})") do |v|
+  $options.port = v
+end
+
 opts.on("--[no-]async", TrueClass,  "benchmark async operations") do |v|
   $options.async = v
+end
+
+opts.on("--[no-]gs", TrueClass,  "benchmark global server") do |v|
+  $options.gs = v
+end
+
+opts.on("--[no-]ls", TrueClass,  "benchmark local server") do |v|
+  $options.ls = v
 end
 
 opts.on("--[no-]mperio", TrueClass,  "use rb-mperio for the event loop") do |v|
@@ -104,11 +120,10 @@ Thread.abort_on_exception = true
 
 SOCKET = "/tmp/localts-test.sock"
 s = UNIXSocket.open SOCKET
-# $c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
 $c = Marinda::Client.new s
 $c.hello
-# $g = Marinda::VerboseClient.new $c.global_commons, "g"
-$g = $c.global_commons
+$c2 = $c.open_port $options.port if $options.ls
+$g2 = $c.open_port $options.port, true if $options.gs
 
 def clear(ts)
   while ts.takep []; end
@@ -200,25 +215,20 @@ end
 
 #############################################################################
 
-if false
-clear $g
-populate $g, 5000
-# $g.take_all [] do |tuple|
-$g.read_all [] do |tuple|
+if $options.ls
+  puts "\n\n==[ local ]=====================================================\n"
+
+  bm_x_all "local commons", $c2, [], 500
+  bm_x_all "local commons", $c2, [], 5000
+  bm_x_async_all "local commons", $c2, [], 5000 if $options.async
 end
-exit 0
+
+if $options.gs
+  puts "\n\n==[ global ]====================================================\n"
+
+  bm_x_all "global commons", $g2, [], 500
+  bm_x_all "global commons", $g2, [], 5000
+  bm_x_async_all "global commons", $g2, [], 5000 if $options.async
 end
-
-puts "\n\n==[ local ]=======================================================\n"
-
-bm_x_all "local commons", $c, [], 500
-bm_x_all "local commons", $c, [], 5000
-bm_x_async_all "local commons", $c, [], 5000 if $options.async
-
-puts "\n\n==[ global ]======================================================\n"
-
-bm_x_all "global commons", $g, [], 500
-bm_x_all "global commons", $g, [], 5000
-bm_x_async_all "global commons", $g, [], 5000 if $options.async
 
 puts "\n\n### DONE."
