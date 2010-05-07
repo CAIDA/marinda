@@ -1,5 +1,10 @@
+version 0.13.2, 2010-05-07
+  * fixed bug: GlobalSpace#enq_message can try to access
+    context.sock.__connection when the connection no longer exists
+
 version 0.13.1, 2010-03-24
-  * fixed bug: failure if connect_nonblock() doesn't block
+  * fixed bug: local server didn't properly handle the case of
+    connect_nonblock() not blocking
 
 version 0.13.0, 2010-03-23
   * replaced main event-loop processing in both the local and global servers
