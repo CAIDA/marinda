@@ -1181,8 +1181,8 @@ class GlobalSpace
     message = Message.new context.seqnum, command, contents
     context.seqnum += 1
 
-    state = context.sock.__connection
     if context.sock && context.sock.__connection_state == :connected
+      state = context.sock.__connection
       state.write_queue << marshal_message(context, message)
       @eva_loop.add_io_events state.watcher, :w
     end
