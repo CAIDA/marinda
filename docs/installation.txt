@@ -77,13 +77,9 @@ ruby: no such file to load -- openssl (LoadError)
 
 === Eva
 
-Eva provides an event-based I/O framework based on
-http://software.schmorp.de/pkg/libev.html[libev].  This package
-is similar in spirit to
-http://rubyeventmachine.com/[EventMachine] and
-http://rev.rubyforge.org/rdoc/[Rev].
-
-Install Eva in the standard way for RubyGems:
+Eva provides an event-based I/O framework using
+http://software.schmorp.de/pkg/libev.html[libev].  Install Eva in the
+standard way for RubyGems:
 
 ----
 $ sudo gem install eva-0.4.1.gem
@@ -124,7 +120,9 @@ $ sudo gem install rjudy-1.0.2.gem
 Otherwise, you'll need to specify the paths to Judy; for example,
 
 ----
-$ sudo gem install rjudy-1.0.2.gem -- --with-judy-include=/usr/local/pkg/judy-1.0.5/include --with-judy-lib=/usr/local/pkg/judy-1.0.5/lib
+$ sudo gem install rjudy-1.0.2.gem -- \
+  --with-judy-include=/usr/local/pkg/judy-1.0.5/include \
+  --with-judy-lib=/usr/local/pkg/judy-1.0.5/lib
 ----
 
 === SQLite and Amalgalite
@@ -206,7 +204,7 @@ TIP: If you want to start playing with Marinda as quickly as possible,
 
 You configure the global and local servers with the configuration
 files `global-config.yaml` and `local-config.yaml`.  These are written
-in the http://www.yaml.org/[YAML] structured text format that is easy
+in the http://www.yaml.org/[YAML] structured text format, which is easy
 to read and write because of its human-oriented design.  You do not
 need to understand much of YAML to read or write Marinda configuration
 files, since only basic YAML elements are used.  You can find samples
@@ -290,9 +288,9 @@ preceding it with a `#` character (`#use_judy: true`).
 === Scenario 2: Global and local tuple spaces with basic security
 
 Choose this configuration if your clients will run on *multiple*
-machines.  In this configuration, the communication between the global
-server and the local server running on each client machine will be
-unencrypted and unauthenticated, and therefore susceptible to
+machines.  In this configuration, communication will be unencrypted
+and unauthenticated between the global server and the local servers
+running on client machines.  This opens up the possibility of
 eavesdropping and man-in-the-middle attacks.  However, the global
 server will only accept connections from the client IP addresses
 configured in `global-config.yaml`.  This provides the same protection
@@ -364,11 +362,19 @@ reject a connection attempt.
 
 === Scenario 3: Global and local tuple spaces with SSL
 
-Choose this configuration if your clients will run on multiple machines and
-you need to encrypt the traffic between the server and clients.  This
-configuration also ensures the highest level of authentication between
-the server and clients.  Servers will check client certificates, and
-clients will check the server certificate.
+Choose this configuration if your clients will run on multiple
+machines and you wish to have strong guarantees of authenticity,
+privacy, and traffic integrity.  In this configuration, communication
+will be encrypted with SSL and authenticated with certificates.  Note
+that this is protecting the communication between the global server
+and the local servers running on client machines.  It is always the
+local servers that open the connection to the global server, and thus,
+in the terminology of SSL, the global server is the _server_ and each
+local server is the _client_.  The local servers verify the _server
+certificate_ of the global server, and the global server verifies the
+_client certificate_ of the local servers.  This two-way
+authentication ensures that only authorized nodes are able to connect
+to the global server.
 
 You will need to create a *self-signed* Certificate-Authority
 certificate (a _CA cert_) and then create the server and client SSL
@@ -420,8 +426,8 @@ Certificate:
 server_port: 8742
 use_ssl: true
 check_client_name: true
-cert: foo-server-cert.pem
-key: foo-server-key.INSECURE.pem
+cert: sample-server-cert.pem
+key: sample-server-key.INSECURE.pem
 ca_file: my-cacert.pem
 #ca_path: hashedCA
 nodes:
@@ -437,7 +443,11 @@ The `check_client_name` line specifies whether the server should check
 the client's IP address against the IP address stored in the _Common
 Name_ field of the client's certificate.  If this line is missing, or
 if the value is `false`, then the server only checks that the client's
-certificate is valid and signed by the trusted CA cert.
+certificate is valid and signed by the trusted CA cert.  Using
+separate client certificates for each client machine leads to the most
+secure system, but when this becomes too inconvenient, the next best
+thing is to use a single generic client certificate and disable
+`check_client_name`.
 
 The `cert` line specifies the path to the server's certificate in the
 PEM format.  Other certificate formats may be supported (see the
@@ -465,8 +475,8 @@ node_id: 1
 global_server_addr: foo.example.com
 global_server_port: 8742
 use_ssl: true
-cert: bar-client-cert.pem
-key: bar-client-key.INSECURE.pem
+cert: sample-client-cert.pem
+key: sample-client-key.INSECURE.pem
 ca_file: my-cacert.pem
 #ca_path: hashedCA
 ----
@@ -606,7 +616,27 @@ You will see the following new files in the `marinda-0.13.2` directory:
 Now go to each client machine and start up the local server with
 the command `./marinda-ls -d` as above.
 
-That's all there is to it.
+That's all there is to it.  You may proceed to the
+link:client-programming.html[Client Programming Guide].
+
+****
+.Starting Marinda from a different location
+
+You can copy the Marinda start up scripts (`marinda-gs` and
+`marinda-ls`) and configuration files anywhere you wish.  If the
+configuration files are not in the current directory when you invoke a
+start up script, then you can use the `--root` option to specify the
+directory containing the configuration files; for example:
+
+----
+$ cp marinda-gs /usr/local/bin
+$ cp global-config.yaml /usr/local/pkg/marinda
+$ /usr/local/bin/marinda-gs --root=/usr/local/pkg/marinda
+----
+
+The _root_ directory is also used to store `globalserver-state.db` and
+`globalserver.LOCK`, so you must have write permission to the directory.
+****
 
 ****
 .Adding new client nodes
