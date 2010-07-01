@@ -2,9 +2,9 @@
 socket: /tmp/localts.sock
 #socket_access: 0777
 node_id: 1
-global_server_addr: foo-server.example.com
+global_server_addr: foo.example.com
 global_server_port: 8742
-#use_judy: true
+use_judy: true
 use_ssl: true
 cert: bar-client-cert.pem
 key: bar-client-key.INSECURE.pem

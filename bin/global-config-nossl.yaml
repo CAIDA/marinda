@@ -1,6 +1,6 @@
 --- 
 server_port: 8742
-#use_judy: true
+use_judy: true
 nodes:
   10.0.2.3: 1
   10.0.2.4: 2

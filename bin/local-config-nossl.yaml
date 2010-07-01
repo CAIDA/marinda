@@ -4,5 +4,5 @@ socket: /tmp/localts.sock
 node_id: 1
 global_server_addr: foo.example.com
 global_server_port: 8742
-#use_judy: true
+use_judy: true
 
