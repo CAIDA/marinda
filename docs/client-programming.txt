@@ -16,6 +16,9 @@ even if you already know how some operations work (perhaps you've had
 some exposure to tuple spaces before), you'll find it beneficial to
 read through the text rather than skipping around.
 
+After completing this tutorial, you may wish to read the
+link:advanced-programming.html[Advanced Client Programming Guide].
+
 
 == Minimal client program
 
@@ -644,6 +647,7 @@ loop do
 end
 ----
 
+The above code illustrates the recommended way of handling IDs.
 As far as the server is concerned, the ID value is completely opaque.
 The server does not care about the value, format, or even the type
 (string, integer, arrray, ...) of the ID--it merely returns it.  The
@@ -953,3 +957,11 @@ number, but in the future, they will be optionally identified with an
 externalized _capability_ (a cryptographically signed handle to a
 region).
 ****
+
+
+== Conclusion
+
+This client programming guide covered the most commonly needed
+operations and concepts.  You may wish to proceed to the
+link:advanced-programming.html[Advanced Client Programming Guide] to
+learn about additional features.
