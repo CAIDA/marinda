@@ -495,22 +495,38 @@ they need to access/update the same variable that sequential access is
 (implicitly) imposed, but that's fine.
 
 
-== Bulk operations: `read_all`, `monitor`
+== Bulk operations: `read_all`, `take_all`, `monitor`, `consume`
 
-Marinda provides two operations for iterating over all tuples that
-match a template.  Both `read_all` and `monitor` return all matching
-tuples one by one, but `read_all` stops iterating when it has passed
-over all tuples while `monitor` blocks and returns future matching
-tuples as they are written by another thread/process.
+Marinda provides several operations for iterating over all tuples that
+match a template.  There are two kinds: operations that iterate over
+all existing tuples and operations that iterate over all existing
+*and* future tuples.  The `read_all` and `take_all` operations return
+all matching tuples one by one and then stop iterating when they have
+passed over all existing tuples.  In contrast, the `monitor` and
+`consume` operations first carry out their action on existing matching
+tuples and then block waiting for future tuples.  These latter
+operations behave like infinite loops and will continue applying their
+action on all future matching tuples as they are written by another
+thread/process.  The `monitor` operation performs the same basic
+action as a `read`; it returns a matching tuple without removing it
+from the tuple space.  The `consume` operation removes a matching
+tuple just like `take`.
 
-Both operations iterate over tuples in _out order_.  As an important
+All operations iterate over tuples in _out order_.  As an important
 consequence, you'll never miss tuples that are added by another
 thread/process while you're in the middle of iterating, because all
-tuples are essentially appended to the end of the tuple space and
+tuples are conceptually appended to the end of the tuple space and
 *never* inserted at some intermediate location that you might have
 already passed over in your iteration.  This property guarantees
 consistent and predictable behavior in the presence of concurrent
 modification by several clients.
+
+NOTE: Because all operations, not just bulk operations, preserve _out
+      order_, it is impossible to implement `read_all` using `read`
+      (each call to `read` will always return the first matching
+      tuple, which in general, will not allow you to iterate over all
+      matching tuples), and impossible to implement `monitor` with
+      `read_all` and `read`, etc.
 
 For example, you can dump out all (existing) tuples in the tuple space
 with the following:
@@ -532,12 +548,11 @@ $ts.monitor([]) do |tuple|
 end
 ----
 
-For either operation, you can terminate the iteration at any time with
-the regular Ruby mechanisms for exiting blocks, such as `break` and
-`return`.
-
-For example, the following method returns the the name of the first
-variable that has a value within the given numeric range [_x1_, _x2_]:
+For all bulk operations, you can terminate the iteration at any time
+with the regular Ruby mechanisms for exiting blocks, such as `break`
+and `return`.  The following method, an extension of the earlier
+calculator example, returns the the name of the first variable that
+has a value within the given numeric range [_x1_, _x2_]:
 
 [source, ruby]
 ----
@@ -550,23 +565,21 @@ def find_var_in_range(ts, x1, x2)
 end
 ----
 
-Both `read_all` and `monitor` are defined to return _all existing_
-tuples that match a template (`monitor` also returns all future
-matching tuples).  Not to be too philosophical, but what does _all
-existing_ mean when the tuple space can be churning under the activity
-of concurrent clients?  The more precise description of how these
-operations work is as follows: they return the next tuple that is
+Not to be too philosophical, but what does _all existing_ tuples mean
+in the context of bulk operations when the tuple space can be churning
+under the activity of concurrent clients?  The more precise semantics
+of bulk operations is as follows: they return the next tuple that is
 available *at each step* of the iteration.  So, for the purposes of
 these operations, a tuple _exists_ if it is the next available tuple
-*at the moment* we execute a step in the iteration.  This is why
-`read_all` and `monitor` can return tuples that were not originally in
-the tuple space when the iteration first started, because any tuples
-added later will _exist_ when these operations finally reach those
-tuples in _out order_.
+*at the moment* we execute a step in the iteration.  This is why bulk
+operations can return tuples that were not originally in the tuple
+space when an iteration first started, since tuples added later will
+_exist_ when these operations finally reach those tuples in _out
+order_.
 
 With this more precise understanding of how these operations work, it
 should now be clear what happens if another client removes a tuple
-before `read_all` or `monitor` has reached that tuple.  By the time
+before a bulk operation has reached that tuple.  By the time
 the iteration reaches the position where the tuple had been in _out
 order_, the tuple is no longer there and therefore it no longer
 _exists_, and so the iteration operation will not return the
@@ -588,15 +601,14 @@ This is actually a bit of a trick question, because it all depends on
 the precise timing of the operations.  Client 2 might print all, some,
 or none of the tuples written by client 3, depending on precisely when
 client 1 executes its `take` operations.  The important point is that
-the `monitor` and `read_all` operations do *not* (and *cannot*)
-guarantee that they will return all *written* tuples, because
-concurrent clients can remove tuples at any time while an iteration is
-in progress.
+bulk operations do *not* (and *cannot*) guarantee that they will
+return all *written* tuples, because concurrent clients can remove
+tuples at any time while an iteration is in progress.
 
 This lack of guarantees is not really an issue in practice.  But you
-do need to be careful to not fall into the trap of thinking that you
-can use `monitor` to, for example, log all written tuples for
-debugging purposes.
+do need to be careful to avoid the trap of thinking that you can use,
+for example, `monitor` to log all written tuples for debugging
+purposes.
 
 
 == Multiple client connections
