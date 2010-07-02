@@ -611,6 +611,68 @@ for example, `monitor` to log all written tuples for debugging
 purposes.
 
 
+== Generating unique request IDs
+
+A common coordination pattern is request-response--one thread/process
+makes a request to another and then waits for a response.  If multiple
+requests can be made concurrently, then each request should have an ID
+so that the response can be matched up with it.  Specifically, the
+requester should store an ID in the request tuple, and the responder
+should return this ID in the response tuple.
+
+Let's revisit the calculator example to make the discussion concrete.
+In the _coordination protocol_ of this calculation service, the client
+submits a request of the form `["ADD", x, y]` and then retrieves the
+result by performing a take on `["SUM", nil]`.  The flaw in this
+protocol is that `["SUM", nil]` will match any result, even one
+intended for another client.  The fix is to add an ID value to the
+request, `["ADD", id, x, y]`, and perform a take on `["SUM", id,
+nil]`.  Here is the revised server (the `value_of` method is
+unchanged and thus omitted from the listing):
+
+[source, ruby]
+----
+loop do
+  tuple = $ts.take ["ADD", nil, nil, nil]
+  reqnum, x, y = tuple.values_at 1, 2, 3
+  p tuple
+  break if x == 0 && y == 0
+  v1 = value_of(x)
+  v2 = value_of(y)
+  result = (v1 && v2 ? v1 + v2 : nil)
+  $ts.write ["SUM", reqnum, result]
+end
+----
+
+As far as the server is concerned, the ID value is completely opaque.
+The server does not care about the value, format, or even the type
+(string, integer, arrray, ...) of the ID--it merely returns it.  The
+client can, therefore, use whatever ID value that best suits its
+needs, perhaps even storing some metadata in the ID.
+
+The required level of uniqueness of an ID value will depend on the
+situation.  If the ID needs to be globally unique across all nodes and
+across time, then you may want to let Marinda generate an ID for you.
+You can invoke the `gen_id` method on the Marinda connection object to
+obtain an ID that is globally unique with a high probability.  Marinda
+can generate a global ID without incurring any latency cost, and in
+fact, the ID is generated independently by the calling thread/process
+itself without contacting a Marinda server (local or global), and thus
+it is efficent and scalable.  For example,
+
+[source, ruby]
+----
+>> $ts.gen_id
+=> "1:1d:4f700e47b3a9"
+>> reqnum = $ts.gen_id
+=> "2:1d:4f700e47b3a9"
+>> $ts.write ["ADD", reqnum, 2, 3]
+=> ["ADD", "2:1d:4f700e47b3a9", 2, 3]
+>> $ts.take ["SUM", reqnum, nil]
+=> ["SUM", "2:1d:4f700e47b3a9", 5]
+----
+
+
 == Multiple client connections
 
 A client can only execute a single operation at a time over any given
