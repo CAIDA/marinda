@@ -280,6 +280,12 @@ you for this client machine.  The node ID must be in the range 1 to
 connects to a given global tuple-space server must have a unique node
 ID.
 
+You can specify the optional name of the node with a `node_name` line;
+for example: `node_name: nibbler`.  Node names should be strings of
+letters, numbers, dashes, or underscores.  Client programs can query
+Marinda for the local node's name and use this information for various
+purposes, such as for dynamic configuration.
+
 The `use_judy` line enables use of Judy.  If you do not have Judy
 installed, then set this option to `false` or comment out the line by
 preceding it with a `#` character (`#use_judy: true`).
