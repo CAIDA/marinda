@@ -498,6 +498,7 @@ they need to access/update the same variable that sequential access is
 (implicitly) imposed, but that's fine.
 
 
+[[sec_bulk_operations]]
 == Bulk operations: `read_all`, `take_all`, `monitor`, `consume`
 
 Marinda provides several operations for iterating over all tuples that
