@@ -64,6 +64,7 @@ to maintain the last known values (node ID, run ID) in the global
 tuple space or on local disk.  If you detect a restart, you might
 clear out stale system state.
 
+
 == Streaming operations: `monitor_stream`, `consume_stream`
 
 Because of the potential for high latency, special care is needed to
@@ -144,3 +145,62 @@ the Bag-of-Tasks and the Master-Slave patterns are common ways of
 exploiting embarrassingly parallel tasks.  Because `consume_stream`
 may lead to an unfair distribution of tuples, it is unsuitable for
 implementing these patterns.
+
+
+== Using wildcards in _tuples_ (not just in templates)
+
+Ordinarily, a `nil` value is used as a wildcard in _templates_.
+However, a `nil` value can also be used in _tuples_, to achieve a
+similar wildcard effect but with the roles of template and tuple
+reversed.  So far, we have said that a fully-specified template (that
+is, a template free of wildcards) like `[1, 2, 3]` only matches tuples
+with exactly the same values.  In truth, such a template also matches
+`[1, 2, nil]`, `[nil, 2, nil]`, and `[nil, nil, nil]`, among others.
+If a tuple has a `nil` value in a given position, then the tuple will
+match any value in the corresponding position of the template
+(including, of course, the template wildcard `nil`).
+
+Wildcards in tuples are less generally useful than wildcards in
+templates, but there are specific scenarios where they are valuable,
+as the following example shows.  Suppose there are three servers
+located in the USA, Europe, and Asia (by _server_, we mean some user
+application providing a service that uses Marinda for coordination,
+not a Marinda local/global server), and suppose each server accepts
+requests over the tuple space with a loop like the following (in the
+case of the European server):
+
+[source, ruby]
+----
+$ts.consume(["Europe", nil]) do |tuple|
+  ...
+end
+----
+
+As usual, if a client wants to issue a request to a server at a
+particular location, then it can include the location in its request
+tuple; for example, `["Europe", 123]` would be picked up by the
+European server, and `["USA", 123]` by the USA server.  But what if
+the client doesn't care about the location, and it just wants the next
+available server to handle the request?  The client can't know, in
+general, which server is available, so it can't pick the right
+location value to use.  The solution is to use `nil` for the location,
+since a tuple like `[nil, 123]` will match any of the templates used
+by the different servers.  Such requests will be naturally
+load-balanced across available servers without any special effort by
+clients or servers.  If multiple servers are available, then Marinda
+ensures that tuples are distributed in a first-come-first-served basis
+(that is, available servers will receive tuples in the order in which
+they executed the `take`, `consume`, etc. operation to retrieve the
+tuple), so no server is allowed to starve.
+
+TIP: If clients never need to issue requests to specific servers, then
+     it would be simpler to just leave out the location (or other
+     identifying) component from the request tuples when designing the
+     coordination protocol between clients and servers.
+
+NOTE: Because `nil` values are always allowed in tuples, you need to
+      be vigilant of bugs.  A common result of bugs is to produce a
+      `nil` value, which can now be easily transferred over the tuple
+      space to another client that may be unprepared to handle it.
+      Sanity checking the values retrieved from the tuple space can
+      help mitigate such problems.
