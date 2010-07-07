@@ -194,9 +194,12 @@ they executed the `take`, `consume`, etc. operation to retrieve the
 tuple), so no server is allowed to starve.
 
 TIP: If clients never need to issue requests to specific servers, then
-     it would be simpler to just leave out the location (or other
-     identifying) component from the request tuples when designing the
-     coordination protocol between clients and servers.
+     a simpler approach is to just leave out the location (or other
+     identifying) component from request tuples when designing the
+     coordination protocol between clients and servers.  However,
+     tuple wildcards are useful when you need to do both--sometimes
+     issue requests to specific servers and sometimes to any available
+     server.
 
 NOTE: Because `nil` values are always allowed in tuples, you need to
       be vigilant of bugs.  A common result of bugs is to produce a
