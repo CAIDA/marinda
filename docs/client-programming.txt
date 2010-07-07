@@ -569,7 +569,7 @@ def find_var_in_range(ts, x1, x2)
 end
 ----
 
-Not to be too philosophical, but what does _all existing_ tuples mean
+Not to be too philosophical, but what does _all existing tuples_ mean
 in the context of bulk operations when the tuple space can be churning
 under the activity of concurrent clients?  The more precise semantics
 of bulk operations is as follows: they return the next tuple that is
