@@ -321,7 +321,7 @@ example, at the steps marked with `<1>` and `<2>`, we update the value
 of the variable _x_.  What if the calculator server (or some other
 process) tries to look up the value of this variable at the same time?
 
-In a conventional multi-process or multi-threaded program, we would
+In a conventional multiprocess or multithreaded program, we would
 have to use locks to atomically update the value of the variable _x_;
 that is, steps `<1>` and `<2>` would be wrapped in a lock so that the
 calculator server won't see an intermediate stage where the variable
@@ -427,7 +427,7 @@ And we can query it:
 ----
 
 There are other ways of solving this problem.  For comparison, we'll
-implement a solution that is more traditional in multi-threaded
+implement a solution that is more traditional in multithreaded
 applications.  We'll use the tuple `["VAR-LOCK"]` as a global lock (a
 _semaphore_) to control access to variables.  If this tuple exists,
 then the lock is free; otherwise, someone is holding the lock (that
@@ -615,6 +615,73 @@ for example, `monitor` to log all written tuples for debugging
 purposes.
 
 
+== Multiple client connections
+
+A client can only execute a single operation at a time over any given
+connection to Marinda (in this tutorial, we store an open connection
+in the `$ts` variable).  This is obviously an issue in multithreaded
+programs, but it can also be an issue in a single-threaded program
+that uses bulk operations.  For example, suppose you tried to write a
+routine that iterates over tuples of the form `[1]` and `[2]`, and
+produces the tuples `[1, 1]` and `[2, 2]`:
+
+[source,ruby]
+----
+>> $ts.write [1]
+>> $ts.write [2]
+>> $ts.read_all([nil]) do |tuple|
+?>   p tuple
+?>   $ts.write [tuple[0], tuple[0]]
+>> end
+[1]
+Marinda::ConnectionBroken: lost connection: Errno::EPIPE: Broken pipe - send(2)
+        from .../marinda-0.13.2/lib/marinda/client.rb:65:in `sock_send'
+        from .../marinda-0.13.2/lib/marinda/client.rb:154:in `send_with_reqnum'
+        from .../marinda-0.13.2/lib/marinda/client.rb:146:in `send_cont'
+        from .../marinda-0.13.2/lib/marinda/client.rb:402:in `read_all'
+        from (irb):65
+>> 
+----
+
+Because this code tried to execute another operation with `$ts` while
+the `read_all` operation was still in progress, the local server
+abruptly dropped the connection, which caused the
+`Marinda::ConnectionBroken` exception.
+
+Fortunately, opening new connections is easy.  You can open a new
+connection in the same way that you opened `$ts`:
+
+[source,ruby]
+----
+$ts2 = Marinda::Client.new(UNIXSocket.open("/tmp/localts.sock"))
+$ts2.hello
+----
+
+But an even better way is to simply duplicate an existing connection:
+
+[source,ruby]
+----
+>> $ts2 = $ts.duplicate
+=> #<Marinda::Client:0x59667c ...>
+----
+
+Now we can successfully implement our repeater:
+
+[source,ruby]
+----
+$ts2 = $ts.duplicate
+$ts.read_all([nil]) do |tuple|
+  p tuple
+  $ts2.write [tuple[0], tuple[0]]
+end
+----
+
+NOTE: A Marinda client connection is heavyweight, so unnecessary
+      connections should be avoided.  Also, there is currently no way
+      to close a connection (that is, connections persist till process
+      termination).
+
+
 == Generating unique request IDs
 
 A common coordination pattern is request-response--one thread/process
@@ -676,73 +743,6 @@ it is efficent and scalable.  For example,
 >> $ts.take ["SUM", reqnum, nil]
 => ["SUM", "2:1d:4f700e47b3a9", 5]
 ----
-
-
-== Multiple client connections
-
-A client can only execute a single operation at a time over any given
-connection to Marinda (in this tutorial, we store an open connection
-in the `$ts` variable).  This is obviously an issue in multi-threaded
-programs, but it can also be an issue in a single-threaded program
-that uses bulk operations.  For example, suppose you tried to write a
-routine that iterates over tuples of the form `[1]` and `[2]`, and
-produces the tuples `[1, 1]` and `[2, 2]`:
-
-[source,ruby]
-----
->> $ts.write [1]
->> $ts.write [2]
->> $ts.read_all([nil]) do |tuple|
-?>   p tuple
-?>   $ts.write [tuple[0], tuple[0]]
->> end
-[1]
-Marinda::ConnectionBroken: lost connection: Errno::EPIPE: Broken pipe - send(2)
-        from .../marinda-0.13.2/lib/marinda/client.rb:65:in `sock_send'
-        from .../marinda-0.13.2/lib/marinda/client.rb:154:in `send_with_reqnum'
-        from .../marinda-0.13.2/lib/marinda/client.rb:146:in `send_cont'
-        from .../marinda-0.13.2/lib/marinda/client.rb:402:in `read_all'
-        from (irb):65
->> 
-----
-
-Because this code tried to execute another operation with `$ts` while
-the `read_all` operation was still in progress, the local server
-abruptly dropped the connection, which caused the
-`Marinda::ConnectionBroken` exception.
-
-Fortunately, opening new connections is easy.  You can open a new
-connection in the same way that you opened `$ts`:
-
-[source,ruby]
-----
-$ts2 = Marinda::Client.new(UNIXSocket.open("/tmp/localts.sock"))
-$ts2.hello
-----
-
-But an even better way is to simply duplicate an existing connection:
-
-[source,ruby]
-----
->> $ts2 = $ts.duplicate
-=> #<Marinda::Client:0x59667c ...>
-----
-
-Now we can successfully implement our repeater:
-
-[source,ruby]
-----
-$ts2 = $ts.duplicate
-$ts.read_all([nil]) do |tuple|
-  p tuple
-  $ts2.write [tuple[0], tuple[0]]
-end
-----
-
-NOTE: A Marinda client connection is heavyweight, so unnecessary
-      connections should be avoided.  Also, there is currently no way
-      to close a connection (that is, connections persist till process
-      termination).
 
 
 == Global tuple space
