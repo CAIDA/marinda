@@ -361,6 +361,7 @@ conns.first.take_async(["ABC"]) do |tuple|
 end
 ----
 
+
 ****
 .Creating custom event sources
 
@@ -391,3 +392,120 @@ readability/writability).  Also be sure to rescue `Errno::EINTR`,
 `read_data` and `write_data`.  To prevent deadlock, be sure to put the
 IO object into nonblocking mode.
 ****
+
+
+== Using private tuple space regions for one-to-one communication
+
+The local and global _tuple spaces_ are each divided into disjoint
+_regions_.  Once a client opens a connection to a region, it can
+communicate freely with any other client connected to the same region.
+These _public regions_ facilitate many-to-many communication.  Marinda
+provides a second, more restrictive form of region, the _private
+region_, that is designed to facilitate one-to-one communication.  A
+private region is like a private mailbox; only the owner can read or
+remove tuples from a private region, but one or more other clients can
+write tuples into it.
+
+A public region stands alone independently of clients, and provides
+persistent storage even with clients constantly joining and leaving.
+In contrast, the existence of a private region is directly tied to a
+single client _connection_.  Whenever a client connects to Marinda, a
+new unique private region is created and associated with the
+connection itself.  When the client closes the connection, the
+associated private region is discarded and becomes inaccessible.
+Thus, a connection provides access to a unique pair of public and
+private regions.
+
+In Marinda, a client does not explicitly identify the public or the
+private region it wishes to act on with a given operation.  Instead,
+the connection itself, on which an operation is invoked, serves as an
+implicit identifier or handle for the target region.  This is possible
+because each connection is permanently associated with a single public
+region and a single private region.  Similarly, each operation
+implicitly acts on either the public or the private region of a
+connection.  All operations described so far act (only) on the public
+region, and the following two additional operations act (only) on the
+private region: `take_priv` and `takep_priv` (and their asynchronous
+versions `take_priv_async` and `takep_priv_async`).  These operations
+work exactly like `take` and `takep`, and because they retrieve tuples
+via template matching (like ordinary operations), they allow you to
+retrieve tuples from a private region in a different order than they
+were put there.  This flexibility allows you to implement something
+like the share-nothing message-passing concurrency model of
+http://www.erlang.org/[Erlang].
+
+Marinda uses a capability-like security model for private regions.
+Only the client holding a connection can remove tuples from the
+private region of the connection, and only clients that have a
+reference to a private region can write to it.  A reference is an
+internal object that cannot be constructed by a client--a reference
+can only be obtained from Marinda, and only the client holding a
+connection (that is, the owner) can pass out references to others.
+Every time a client writes a tuple into a public region, the client
+implicitly and automatically passes out a reference to the private
+region of the connection used.  This reference is attached as metadata
+to the tuple, and functions like the _sender address_ on an envelope.
+When other clients retrieve the tuple, they implicitly obtain the
+reference, which they can then use to reply directly to the private
+region of the original sender.  Because references can only be passed
+in the public region associated with a connection, only the clients
+that have access to a given public region can access the private
+regions of other clients connected to that public region, and
+consequently, only the clients connected to the same public region can
+communicate directly with each other via private regions.
+
+A client must use special operations to write into another client's
+private region.  The most basic operation is `reply`, which simply
+writes a tuple into the private region of the last retrieved tuple
+(using any retrieval operation) on a given connection.  This is
+tailored for the simple case of a server replying directly to a
+requester.  To illustrate, we provide the code for a simple _ping_
+measurement server and its client.  The client issues a request by
+writing a tuple into a public region, and the server writes the
+response directly into the client's private region with `reply`:
+
+[source, ruby]
+.ping client (1st version)
+----
+$ts.write ["PING", "192.168.0.5"]
+result = $ts.take_priv ["RESULT", nil, nil]
+printf "RTT = %f\n", result[2]
+----
+
+[source, ruby]
+.ping server (1st version)
+----
+loop do
+  request = $ts.take ["PING", nil]
+  addr = request[1]
+  rtt = 123.456
+  $ts.reply ["RESULT", addr, rtt]
+end
+----
+
+We can conduct the entire request-response exchange over private
+regions by making use of a _rendezvous_ tuple, which allows the client
+to obtain a reference to the private region of the server:
+
+[source, ruby]
+.ping client (2nd version)
+----
+$ts.read ["PING-SERVER", "EUROPE"]
+$ts.reply ["PING", "192.168.0.5"]
+result = $ts.take_priv ["RESULT", nil, nil]
+printf "RTT = %f\n", result[2]
+----
+
+[source, ruby]
+.ping server (2nd version)
+----
+$ts.take_all ["PING-SERVER", "EUROPE"] do end  # clear stale tuples
+$ts.write ["PING-SERVER", "EUROPE"]
+
+loop do
+  request = $ts.take_priv ["PING", nil]
+  addr = request[1]
+  rtt = 123.456
+  $ts.reply ["RESULT", addr, rtt]
+end
+----
