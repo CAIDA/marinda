@@ -75,6 +75,7 @@ $ts.write ["foo", 2, "bar", 3.14159]
 $ts.write [42]
 ----
 
+[[tut_rb_tip]]
 [TIP]
 ====
 The best way to follow along with this tutorial is to quickly set up
