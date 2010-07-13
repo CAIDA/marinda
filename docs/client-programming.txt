@@ -93,7 +93,7 @@ with `=>`):
 
 [source, ruby]
 ----
-$ cd marinda-0.13.2/docs
+$ cd marinda-0.13.3/docs
 $ irb --prompt-mode simple
 >> load 'tut.rb'
 => true
@@ -636,10 +636,10 @@ produces the tuples `[1, 1]` and `[2, 2]`:
 >> end
 [1]
 Marinda::ConnectionBroken: lost connection: Errno::EPIPE: Broken pipe - send(2)
-        from .../marinda-0.13.2/lib/marinda/client.rb:65:in `sock_send'
-        from .../marinda-0.13.2/lib/marinda/client.rb:154:in `send_with_reqnum'
-        from .../marinda-0.13.2/lib/marinda/client.rb:146:in `send_cont'
-        from .../marinda-0.13.2/lib/marinda/client.rb:402:in `read_all'
+        from .../marinda-0.13.3/lib/marinda/client.rb:65:in `sock_send'
+        from .../marinda-0.13.3/lib/marinda/client.rb:154:in `send_with_reqnum'
+        from .../marinda-0.13.3/lib/marinda/client.rb:146:in `send_cont'
+        from .../marinda-0.13.3/lib/marinda/client.rb:402:in `read_all'
         from (irb):65
 >> 
 ----

@@ -160,9 +160,9 @@ is the same for servers and clients.  Simply execute the following
 commands on each machine:
 
 ----
-$ tar xvzf marinda-0.13.2.tar.gz
-$ cd marinda-0.13.2
-$ sudo gem install marinda-0.13.2.gem
+$ tar xvzf marinda-0.13.3.tar.gz
+$ cd marinda-0.13.3
+$ sudo gem install marinda-0.13.3.gem
 ----
 
 [NOTE]
@@ -208,9 +208,9 @@ in the http://www.yaml.org/[YAML] structured text format, which is easy
 to read and write because of its human-oriented design.  You do not
 need to understand much of YAML to read or write Marinda configuration
 files, since only basic YAML elements are used.  You can find samples
-of these files in the `marinda-0.13.2` directory created from the
+of these files in the `marinda-0.13.3` directory created from the
 Marinda distribution package.  You can directly execute Marinda from
-the `marinda-0.13.2` directory using these configuration files, or if
+the `marinda-0.13.3` directory using these configuration files, or if
 you like, you can move the configuration files to some other location
 and execute Marinda from there (we cover these topics later in
 xref:starting-servers[Starting Servers]).
@@ -579,7 +579,7 @@ NOTE: The volume of syslog messages can be quite high with the above
 == Starting Servers
 
 The easiest way to start up the global and local servers is directly
-from the `marinda-0.13.2` directory created from the Marinda
+from the `marinda-0.13.3` directory created from the Marinda
 distribution package.
 
 If you configured Marinda for _local tuple space only_, then all you
@@ -603,7 +603,7 @@ use Marinda.
 
 The process for starting up the global server is just as simple as for
 the local server.  Go to the machine where you want to run the global
-server and then execute the following command from the `marinda-0.13.2`
+server and then execute the following command from the `marinda-0.13.3`
 directory:
 
 ----
@@ -611,7 +611,7 @@ $ ./marinda-gs -d
 starting marinda-gs in background
 ----
 
-You will see the following new files in the `marinda-0.13.2` directory:
+You will see the following new files in the `marinda-0.13.3` directory:
 
 * `globalserver-state.db`: an SQLite database containing the persistent state
    of the global server, including user-triggered checkpoints of the contents
