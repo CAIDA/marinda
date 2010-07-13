@@ -539,7 +539,9 @@ Call `remember_peer` after retrieving a tuple to obtain a peer
 descriptor for the private region associate with the tuple.  Once you
 have a peer descriptor, you can write into a specific private region
 with `write_to`.  Here is a revised ping client that uses these new
-operations (no change is required on the server side):
+operations (no change is required on the server side, although you do
+need to start up an `ASIA` server instance as well as the previous
+`EUROPE` instance):
 
 [source, ruby]
 .ping client (3rd version)
