@@ -484,13 +484,14 @@ end
 ----
 
 We can conduct the entire request-response exchange over private
-regions by making use of a _rendezvous_ tuple, which allows the client
-to obtain a reference to the private region of the server:
+regions by making use of a _rendezvous_ tuple, a tuple written by the
+server that the client can retrieve to obtain a reference to the
+private region of the server:
 
 [source, ruby]
 .ping client (2nd version)
 ----
-$ts.read ["PING-SERVER", "EUROPE"]
+$ts.read ["PING-SERVER", "EUROPE"]  # get ref to private region
 $ts.reply ["PING", "192.168.0.5"]
 result = $ts.take_priv ["RESULT", nil, nil]
 printf "RTT = %f\n", result[2]
@@ -500,7 +501,7 @@ printf "RTT = %f\n", result[2]
 .ping server (2nd version)
 ----
 $ts.take_all ["PING-SERVER", "EUROPE"] do end  # clear stale tuples
-$ts.write ["PING-SERVER", "EUROPE"]
+$ts.write ["PING-SERVER", "EUROPE"]  # register server
 
 loop do
   request = $ts.take_priv ["PING", nil]
@@ -509,3 +510,108 @@ loop do
   $ts.reply ["RESULT", addr, rtt]
 end
 ----
+
+Some care is needed in using rendezvous tuples, since tuples will
+reference defunct private regions as soon as the connection they were
+written on closes.  The second example server guards against this
+problem by clearing away prior rendezvous tuples at startup and then
+writing a fresh tuple.  If a client tries to write into a defunct
+private region, then Marinda silently discards the tuple (but in the
+future, Marinda might return an error result to better indicate this
+situation).
+
+Though convenient, the `reply` operation is inflexible, since it can
+only be applied to the private region of the last retrieved tuple.
+Marinda provides more flexible operations that take a parameter, a
+_peer descriptor_, that indicates the target private region.  A peer
+descriptor is a small nonnegative integer (analogous to a file
+descriptor) that represents a remembered reference to a private
+region.  You can think of the peer descriptor as an index into a table
+of remembered references; or taking the envelope analogy further, a
+peer descriptor is an index into your personal _address book_, which
+is filled by remembering the _sender address_ of retrieved tuples.  A
+peer descriptor is an _indirect_ reference that only has meaning on
+the connection it was created on, and by design, knowing the value of
+a peer descriptor will not allow a different client to access the
+represented private region.
+
+Call `remember_peer` after retrieving a tuple to obtain a peer
+descriptor for the private region associate with the tuple.  Once you
+have a peer descriptor, you can write into a specific private region
+with `write_to`.  Here is a revised ping client that uses these new
+operations (no change is required on the server side):
+
+[source, ruby]
+.ping client (3rd version)
+----
+$ts.read ["PING-SERVER", "EUROPE"]  # get ref to private region
+eu_peer = $ts.remember_peer()
+
+$ts.read ["PING-SERVER", "ASIA"]
+asia_peer = $ts.remember_peer()
+
+$ts.write_to eu_peer, ["PING", "192.168.0.5"]
+$ts.write_to asia_peer, ["PING", "192.168.0.5"]
+
+result = $ts.take_priv ["RESULT", nil, nil]
+result = $ts.take_priv ["RESULT", nil, nil]
+----
+
+Only a finite (but large) number of peers can be remembered per
+connection, so you should free an unneeded peer descriptor _p_ with a
+call to `forget_peer(p)`.  It is safe to call `forget_peer` on an
+already free peer descriptor.
+
+
+== Implementation limits
+
+This section summarizes the implementation limits on Marinda clients
+and servers:
+
+* *max template/tuple size* = _65,535 bytes in serialized form_; a
+   template/tuple is serialized into a special text format, and this
+   text format can be larger than the raw data values (in binary form)
+   of a template/tuple, especially if there are long strings; strings,
+   regardless of content, expand by a factor of about 4/3 in the text
+   encoding
+
+* *max string length in template/tuple* = _24,575 bytes_; the tuple
+   space abstraction isn't designed for bulk transport of data, but
+   you can send large amounts of data in smaller chunks, if necessary
+
+* *max values in template/tuple* = _1024 values_
+
+* *max nesting depth of subarrays in template/tuple* = _255 levels_
+
+* *max remembered references to private regions per connection* =
+   _2^31^-1 references_
+
+* *max public/private regions* = _2^48^ regions per public/private
+   scope_; limited more by main memory, since all regions and their
+   tuples must be in memory; the global server hosts all global
+   public/private regions; each local server only hosts its own local
+   public/private regions
+
+* *max tuples per region* = _2^31^-1 (on 32-bit CPUs) and 2^63^-1 (on
+  64-bit CPUs)_; limited more by main memory, since all tuples must be
+  in memory; also, currently, an internal index will overflow after
+  this many tuples have been written into any given region, which is a
+  lot more likely to happen in practice than storing this many tuples;
+  operations execute O(n), except when using the template `[]`, so
+  performance may degrade significantly after a few thousand tuples
+  due to unoptimized template matching
+
+* *max blocked operations per region* = _no imposed limit_; however,
+  performance may degrade significantly after a few hundred operations
+  (like `take` and `monitor`) are blocked waiting for new tuples to
+  arrive, since each tuple written into a region has to be checked
+  against every blocked operation in the worst case, which is O(n)
+
+* *max Marinda connections per client* = _no imposed limit_; limited
+   only by the max number of file descriptors a process can open
+
+* *max client connections per local server* = _no imposed limit_;
+   limited only by the max number of file descriptors a process can
+   open
+
+* *max nodes in Marinda deployment* = _32,768 nodes_
