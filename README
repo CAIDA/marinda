@@ -1,6 +1,6 @@
 ============================================================================
 
-                      Marinda Tuple Space
+                          Marinda Tuple Space
 
 ----------------------------------------------------------------------------
 
@@ -8,28 +8,16 @@ Marinda is a distributed tuple space developed by Young Hyun at CAIDA
 (http://www.caida.org) as part of the Archipelago (Ark) measurement
 infrastructure (http://www.caida.org/projects/ark/).
 
-See the docs subdirectory for installation and programming guides:
+See the 'docs' subdirectory for installation and programming guides:
 
-   docs/installation.html
+   docs/installation.html          [ START HERE ]
    docs/client-programming.html
+   docs/advanced-programming.html
 
+There are also runnable sample scripts in the 'docs' subdirectory.
 
-----------------------------------------------------------------------------
-Requirements
-----------------------------------------------------------------------------
-
-You must install the following Ruby gems:
-
-  * amalgalite
-  * eva
-  * rjudy (optional, but strongly recommended)
-
-For example,
-
- $ sudo gem install amalgalite
-
-will download, build, and install the Amalgalite gem from the gem
-repository of the Ruby community.
+See the 'test' subdirectory for testing and benchmarking scripts.
+There is currently no documentation on these scripts.
 
 
 ----------------------------------------------------------------------------

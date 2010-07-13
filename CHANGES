@@ -1,3 +1,7 @@
+version 0.13.3, 2010-07-12
+  * updated 'Installation Guide' and 'Client Programming Guide'
+  * added 'Advanced Client Programming Guide' and runnable example scripts
+
 version 0.13.2, 2010-05-07
   * fixed bug: GlobalSpace#enq_message can try to access
     context.sock.__connection when the connection no longer exists
