@@ -405,13 +405,14 @@ class GlobalSpace
   # application-level reads/writes until the SSL renegotiation completes.
   class SockState
     attr_accessor :context, :watcher, :read_buffer, :write_queue, :ssl_io
-    attr_accessor :write_and_disconnect
+    attr_accessor :write_and_disconnect, :write_queue_ssl_workaround
 
     def initialize(context)
       @context = context
       @read_buffer = ReadBuffer.new
       @write_queue = []  # [ String ]
       @write_and_disconnect = false
+      @write_queue_ssl_workaround = nil  # see comments at on_io_write()
       @ssl_io = nil
     end
   end
@@ -714,14 +715,19 @@ class GlobalSpace
       return
     end
 
-    if state.write_queue.length == 1
-      buffer = state.write_queue.first
-    elsif state.write_queue.length > 1
-      buffer = state.write_queue.join nil
-      state.write_queue.clear
-      state.write_queue << buffer
-    else  # state.write_queue.length == 0 
-      return  # nothing to do -- spurious write readiness
+    if state.write_queue_ssl_workaround
+      buffer = state.write_queue_ssl_workaround
+      state.write_queue_ssl_workaround = nil
+    else
+      if state.write_queue.length == 1
+        buffer = state.write_queue.first
+      elsif state.write_queue.length > 1
+        buffer = state.write_queue.join nil
+        state.write_queue.clear
+        state.write_queue << buffer
+      else  # state.write_queue.length == 0 
+        return  # nothing to do -- spurious write readiness
+      end
     end
 
     begin
@@ -761,6 +767,17 @@ class GlobalSpace
       $log.debug "write_data to %p (node %d): IO::WaitWritable",
         sock, state.context.node_id if $debug_io_bytes
       # do nothing, since we'll automatically retry in the next select() round
+
+      # XXX This implements a workaround for some tricky SSL behavior.
+      #
+      # When SSL_write() returns with SSL_ERROR_WANT_WRITE or
+      # SSL_ERROR_WANT_READ, we must pass the exact same buffer (underlying
+      # char * pointer) to SSL_write() when the socket is ready to write.
+      # If we pass a different buffer, even with the same contents, then
+      # SSL will raise "error:1409F07F:SSL routines:SSL3 WRITE_PENDING:bad
+      # write retry", which shows up in Ruby as #<OpenSSL::SSL::SSLError:
+      # SSL_write:>.
+      state.write_queue_ssl_workaround = buffer
 
     # syswrite may throw "not opened for writing (IOError)";
     # This also catches Errno::EPIPE.

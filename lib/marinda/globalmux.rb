@@ -149,6 +149,7 @@ class GlobalSpaceMux
 
     @read_buffer = ReadBuffer.new
     @write_queue = []  # [ String ]
+    @write_queue_ssl_workaround = nil  # see notes at write_data()
     @messages = []  # raw messages from the global server read in read_data
   end
 
@@ -586,14 +587,19 @@ class GlobalSpaceMux
 
 
   def write_data(sock, timestamp)
-    if @write_queue.length == 1
-      buffer = @write_queue.first
-    elsif @write_queue.length > 1
-      buffer = @write_queue.join nil
-      @write_queue.clear
-      @write_queue << buffer
-    else  # @write_queue.length == 0 
-      return  # nothing to do -- spurious write readiness
+    if @write_queue_ssl_workaround
+      buffer = @write_queue_ssl_workaround
+      @write_queue_ssl_workaround = nil
+    else
+      if @write_queue.length == 1
+        buffer = @write_queue.first
+      elsif @write_queue.length > 1
+        buffer = @write_queue.join nil
+        @write_queue.clear
+        @write_queue << buffer
+      else  # @write_queue.length == 0 
+        return  # nothing to do -- spurious write readiness
+      end
     end
 
     begin
@@ -621,6 +627,17 @@ class GlobalSpaceMux
       # readiness notification can lead to this exception.
       $log.info "GlobalSpaceMux#write_data to %p: IO::WaitWritable", sock
       # do nothing, since we'll automatically retry
+
+      # XXX This implements a workaround for some tricky SSL behavior.
+      #
+      # When SSL_write() returns with SSL_ERROR_WANT_WRITE or
+      # SSL_ERROR_WANT_READ, we must pass the exact same buffer (underlying
+      # char * pointer) to SSL_write() when the socket is ready to write.
+      # If we pass a different buffer, even with the same contents, then
+      # SSL will raise "error:1409F07F:SSL routines:SSL3 WRITE_PENDING:bad
+      # write retry", which shows up in Ruby as #<OpenSSL::SSL::SSLError:
+      # SSL_write:>.
+      @write_queue_ssl_workaround = buffer
 
     # syswrite may throw "not opened for writing (IOError)"
     rescue SocketError, IOError, SystemCallError, OpenSSL::SSL::SSLError
