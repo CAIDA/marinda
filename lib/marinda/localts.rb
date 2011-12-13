@@ -17,7 +17,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
+## Copyright (C) 2007,2008,2009,2010,2011 The Regents of the University of
 ## California.
 ## 
 ## This file is part of Marinda.
@@ -391,10 +391,7 @@ class LocalSpace
       case command
       when :binding_created, :channel_duplicated, :port_opened
 	new_channel, client_sock = args
-	if new_channel
-	  new_channel.shutdown()
-	  client_sock.close rescue nil
-	end
+	new_channel.shutdown client_sock if new_channel
       else
         fail "INTERNAL ERROR: unhandled operation %p", operation
       end
