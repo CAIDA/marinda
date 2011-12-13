@@ -2,6 +2,9 @@ version 0.13.4, 2011-12-13
   * implemented a workaround for tricky nonblocking I/O behavior of SSL
     that could cause the local server to lose its connection to the global
     server when performing a large amount of writes
+  * fixed bug that could trigger an unhandled exception in the local server
+    if a client disconnected before receiving a handle to a newly created
+    channel
 
 version 0.13.3, 2010-07-12
   * updated 'Installation Guide' and 'Client Programming Guide'
