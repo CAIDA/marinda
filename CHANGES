@@ -1,3 +1,7 @@
+version 0.13.5, 2012-03-07
+  * changed Gem spec to automatically install some of the included scripts
+    to Ruby's bin directory (e.g., marinda-gs, marinda-ls)
+
 version 0.13.4, 2011-12-13
   * implemented a workaround for tricky nonblocking I/O behavior of SSL
     that could cause the local server to lose its connection to the global

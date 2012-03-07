@@ -43,6 +43,9 @@ EOF
   s.has_rdoc  = false
   s.extra_rdoc_files = MY_EXTRA_FILES
 
+  s.executables = ["marinda-gs", "marinda-ls", "migrate-checkpoints",
+                   "purge-checkpoints", "show-checkpoints"]
+
   # Although adding this is nice in theory, it's annoying in practice, since
   # RubyGems will try to automatically upgrade amalgalite if one is already
   # installed, and the user may not want that.  At a minimum, RubyGems will
