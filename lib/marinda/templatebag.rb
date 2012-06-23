@@ -45,7 +45,7 @@ class TemplateBag
   private #==================================================================
 
   # Returns true if the tuple matched a template (and was consumed).
-  def consume_tuple(tuple, seqnum)
+  def consume_tuple(tuple)
     node = @consume_requests.find_node { |r| r.template.match tuple }
     return false unless node
 
@@ -57,14 +57,13 @@ class TemplateBag
     # prevents any one requester from monopolizing tuples.
     @consume_requests << request if request.operation == :consume_stream
 
-    tuple.seqnum = seqnum
     @worker.region_result @port, request.channel, request.operation,
       request.template, tuple
     true
   end
 
   # Returns true if the tuple matched any template.
-  def read_tuple(tuple, seqnum)
+  def read_tuple(tuple)
     nodes = @read_requests.find_all_nodes { |r| r.template.match tuple }
     return false if nodes.length == 0
 
@@ -74,7 +73,6 @@ class TemplateBag
         @read_requests.delete_node node
       end
 
-      tuple.seqnum = seqnum
       @worker.region_result @port, request.channel, request.operation,
 	request.template, tuple
     end
@@ -140,11 +138,11 @@ class TemplateBag
   # (by, say, a 'take' request).  Otherwise, returns false; that is, if
   # *either* there was no match, or the tuple was not consumed (which happens
   # for 'read' requests).
-  def match_consume(tuple, seqnum)
-    if consume_tuple tuple, seqnum
+  def match_consume(tuple)
+    if consume_tuple tuple
       return true
     else
-      read_tuple tuple, seqnum
+      read_tuple tuple
       return false
     end
   end

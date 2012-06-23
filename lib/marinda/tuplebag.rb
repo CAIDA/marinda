@@ -71,9 +71,13 @@ class TupleBag
   end
 
 
-  def write(tuple)
+  def prepare_write(tuple)
     @seqnum += 1
     tuple.seqnum = @seqnum
+  end
+
+  # The caller must have called prepare_write(tuple) prior to commit_write.
+  def commit_write(tuple)
     @tuples << tuple
   end
 

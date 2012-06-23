@@ -96,8 +96,9 @@ class Region
 
   # This operation is an exception in not producing any result.
   def write(tuple, channel)
-    unless @templates.match_consume tuple, (@tuples.seqnum + 1)
-      @tuples.write tuple
+    @tuples.prepare_write tuple
+    unless @templates.match_consume tuple
+      @tuples.commit_write tuple
     end
     nil
   end
