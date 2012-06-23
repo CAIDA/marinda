@@ -1,3 +1,7 @@
+version 0.13.6, 2012-06-22
+  * fixed bug in 'consume' operation ('consume_stream' not affected):
+    a race condition could cause tuples to be lost
+
 version 0.13.5, 2012-03-07
   * changed Gem spec to automatically install some of the included scripts
     to Ruby's bin directory (e.g., marinda-gs, marinda-ls)
