@@ -33,4 +33,8 @@ else
   $CFLAGS += " -DMIO_LITTLE_ENDIAN"
 end
 
+dir_config('judy', ['/usr/include', '/usr/local/include', '/opt/local/include'],
+                   ['/usr/lib', '/usr/local/lib', '/opt/local/lib'])
+have_library('Judy', 'JudySLFirst')
+
 create_makefile("mioext")

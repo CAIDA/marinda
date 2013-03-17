@@ -1,9 +1,10 @@
 /*
-** Ruby bindings to the Marinda messaging routines.
+** Ruby bindings to Judy arrays.
 **
 ** --------------------------------------------------------------------------
 ** Author: Young Hyun
-** Copyright (C) 2009 The Regents of the University of California.
+** Copyright (C) 2013 Young Hyun
+** Copyright (C) 2013 The Regents of the University of California.
 **
 ** This program is free software; you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
@@ -20,14 +21,9 @@
 ** Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 **/
 
-#include "ruby.h"
-#include "compat.h"
+#ifndef __RJUDY_H
+#define __RJUDY_H
 
-#include "mio.h"
-#include "rjudy.h"
+void Init_judy(void);
 
-void Init_mioext(void)
-{
-  Init_mio();
-  Init_judy();
-}
+#endif  /* __RJUDY_H */
