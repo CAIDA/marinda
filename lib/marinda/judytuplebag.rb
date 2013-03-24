@@ -3,8 +3,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010,2013 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -146,13 +145,6 @@ class JudyTupleBag
   end
 
   def shutdown
-    @tuples.each do |tuple|
-      fd = tuple.access_fd
-      if fd
-	fd.close
-	tuple.access_fd = nil
-      end
-    end
     @tuples.free_array()
     @tuples = nil
     self

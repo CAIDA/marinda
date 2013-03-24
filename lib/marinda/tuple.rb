@@ -3,8 +3,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -73,7 +72,7 @@ class Tuple
   flag :auto_increment, 0x04
   flag :auto_decrement, 0x08
 
-  attr_accessor :seqnum, :flags, :sender, :forwarder, :access_fd
+  attr_accessor :seqnum, :flags, :sender, :forwarder
   attr_reader :values_mio
 
   def self.from_mio(s)
@@ -91,7 +90,6 @@ class Tuple
     @flags = 0
     @sender = sender
     @forwarder = nil
-    @access_fd = nil
     @values_mio = values_mio
     @values = nil
   end
@@ -104,14 +102,14 @@ class Tuple
   def inspect
     @values = MIO.decode @values_mio unless @values
     sprintf "#<Marinda::Tuple:%#x @flags=0b%b, @sender=%#x, " +
-      "@forwarder=%#x, @access_fd=%p @values=[%s]>", object_id, @flags,
-      @sender, (@forwarder || 0), @access_fd,
+      "@forwarder=%#x, @values=[%s]>", object_id, @flags,
+      @sender, (@forwarder || 0),
       @values.map { |v| v.inspect }.join(", ")
   end
 
   def to_yaml_properties
     @values = MIO.decode @values_mio unless @values
-    %w{ @seqnum @flags @sender @forwarder @values }  # No @access_fd.
+    %w{ @seqnum @flags @sender @forwarder @values }
   end
 
   def to_mio  # XXX store version info?

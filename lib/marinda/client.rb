@@ -8,8 +8,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -165,56 +164,6 @@ class Client
   end
 
 
-  # Passes out 'Broken pipe - send(2) (Errno::EPIPE)' as ConnectionBroken.
-  def sock_send_io(file)
-    begin
-      @sock.send_io file
-    rescue Errno::EPIPE
-      raise ConnectionBroken, "lost connection: #{$!.class.name}: #{$!}"
-    end
-  end
-
-
-  # Returns an IO object on success or raises an exception on any error.
-  #
-  # If you know, a priori, that the file descriptor being received represents
-  # a certain type of IO object (e.g., File or UNIXSocket), then you must
-  # manually convert the returned IO object to a subclass using one of the
-  # methods to_file or to_klass.  These methods tie the lifetime of the
-  # original IO object to the lifetime of the newly-created object returned
-  # by to_file and to_klass, so that garbage collection doesn't silently
-  # close the underlying file descriptor at the wrong moment.
-  #
-  # UNIXSocket.recv_io can take a klass parameter, but this doesn't fully
-  # eliminate the need for the to_klass hack because, oftentimes, the
-  # caller doesn't know what class the IO object should be until sometime
-  # after calling recv_io.
-  def sock_recv_io
-    begin
-      io = @sock.recv_io
-      if io
-	class << io
-	  def to_file
-	    to_klass File
-	  end
-
-	  def to_klass(klass)
-	    retval = klass.for_fd fileno
-	    retval.instance_variable_set :@___original_file, self
-	    retval
-	  end
-	end
-	$stdout.printf "sock_recv_io: io=%p\n", io if @@debug
-	return io
-      else
-	raise OperationError, "failed to receive file descriptor"
-      end
-    rescue Errno::ECONNRESET
-      raise ConnectionBroken, "lost connection: #{$!.class.name}: #{$!}"
-    end
-  end
-
-
   def send(format, *values)
     @reqnum = (@reqnum == REQNUM_MAX ? 1 : @reqnum + 1)
     $stdout.puts "send: reqnum=" + @reqnum.to_s if @@debug
@@ -245,27 +194,18 @@ class Client
       recv_reqnum, code = payload.unpack("CC")
       $stdout.puts "received reqnum=" + recv_reqnum.to_s if @@debug
 
-      if code == TUPLE_WITH_RIGHTS_RESP || code == ACCESS_RIGHT_RESP
-	file = sock_recv_io
-      else
-	file = nil
-      end
-
       if recv_reqnum == @reqnum
-	return decode_response payload[1..-1], file, expected
-      else
-	file.close rescue nil if file
+	return decode_response payload[1..-1], expected
       end
     end
   end
 
 
-  def decode_response(payload, file, expected)
-    $stdout.printf "decode_response(payload=%p, file=%p, expected=%p)\n",
-      payload, file, expected if @debug
+  def decode_response(payload, expected)
+    $stdout.printf "decode_response(payload=%p, expected=%p)\n",
+      payload, expected if @debug
     code = payload.unpack("C").first
     unless code == ERROR_RESP || expected.include?(code)
-      file.close rescue nil if file
       raise ProtocolError, "unexpected response from server: #{code}"
     end
 
@@ -273,16 +213,12 @@ class Client
     when ACK_RESP
       return payload.unpack("C")   # command
 
-    when TUPLE_RESP, TUPLE_WITH_RIGHTS_RESP
+    when TUPLE_RESP
       tuple = MIO.decode payload[1 ... payload.length]
-      tuple << file if file
       return [ code, tuple ]
 
     when TUPLE_NIL_RESP
       return [ TUPLE_RESP, nil ]
-
-    when ACCESS_RIGHT_RESP
-      return [ ACCESS_RIGHT_RESP, file ]
 
     when HANDLE_RESP
       return payload.unpack("CN")
@@ -313,19 +249,7 @@ class Client
 
 
   def receive_tuple
-    response = receive TUPLE_RESP, TUPLE_NIL_RESP, TUPLE_WITH_RIGHTS_RESP
-    return response[1]
-  end
-
-
-  def receive_channel
-    file = receive_access_right
-    Client.new(file.to_klass(UNIXSocket))
-  end
-
-
-  def receive_access_right
-    response = receive ACCESS_RIGHT_RESP
+    response = receive TUPLE_RESP, TUPLE_NIL_RESP
     return response[1]
   end
 
@@ -361,9 +285,8 @@ class Client
   end
 
 
-  def async_receive_tuple(payload, file)
-    code, tuple = decode_response payload, file,
-      [TUPLE_RESP, TUPLE_NIL_RESP, TUPLE_WITH_RIGHTS_RESP]
+  def async_receive_tuple(payload)
+    code, tuple = decode_response payload, [TUPLE_RESP, TUPLE_NIL_RESP]
     begin
       @async_callback.call tuple
     ensure
@@ -373,21 +296,20 @@ class Client
   end
 
 
-  def async_execute_iteration(payload, file)
-    async_execute_general_iteration payload, file, true
+  def async_execute_iteration(payload)
+    async_execute_general_iteration payload, true
   end
 
 
-  def async_execute_stream_iteration(payload, file)
-    async_execute_general_iteration payload, file, false
+  def async_execute_stream_iteration(payload)
+    async_execute_general_iteration payload, false
   end
 
 
   # Execute the iteration of read_all, take_all, monitor, consume,
   # monitor_stream, and consume_stream.
-  def async_execute_general_iteration(payload, file, needs_next)
-    code, tuple = decode_response payload, file,
-      [TUPLE_RESP, TUPLE_NIL_RESP, TUPLE_WITH_RIGHTS_RESP]
+  def async_execute_general_iteration(payload, needs_next)
+    code, tuple = decode_response payload, [TUPLE_RESP, TUPLE_NIL_RESP]
     if tuple
       needs_cancel = true
       begin
@@ -475,18 +397,6 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_write? and can_forward?
     send "CNa*", FORWARD_TO_CMD, peer, MIO.encode(tuple)
-    receive_ack
-    true
-  end
-
-
-  def pass_access_to(peer, file, tuple)
-    raise ClientError if @active_command
-    fail "attempt to pass access rights in global tuple space" if is_global?
-    raise PrivilegeError unless can_write? and can_pass_access?
-    send "CNa*", PASS_ACCESS_TO_CMD, peer, MIO.encode(tuple)
-    file = file.fileno if file.kind_of? IO
-    sock_send_io file
     receive_ack
     true
   end
@@ -879,17 +789,8 @@ class Client
       recv_reqnum, code = payload.unpack("CC")
       $stdout.puts "received reqnum=" + recv_reqnum.to_s if @@debug
 
-      if code == TUPLE_WITH_RIGHTS_RESP || code == ACCESS_RIGHT_RESP
-        fail "UNIMPLEMENTED: receiving fd asynchronously"
-	file = sock_recv_io()
-      else
-	file = nil
-      end
-
       if recv_reqnum == @reqnum
-        @active_command.call payload[1..-1], file
-      else
-	file.close rescue nil if file
+        @active_command.call payload[1..-1]
       end
     end
   end

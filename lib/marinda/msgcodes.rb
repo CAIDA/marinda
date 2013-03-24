@@ -4,8 +4,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -30,6 +29,12 @@ module Marinda
 #       of message codes will change and break protocol interoperability.
 module ChannelMessageCodes
 
+  # Protocol 4:
+  #  * removed
+  #     8 => :PASS_ACCESS_TO_CMD
+  #     5 => :TUPLE_WITH_RIGHTS_RESP,
+  #     6 => :ACCESS_RIGHT_RESP,
+  #
   # Protocol 3:
   #  * switched to using MIO (instead of YAML) for encoding tuples/templates
   #  * HELLO_RESP returns more info: client_id, run_id, node_id, node_name
@@ -39,7 +44,7 @@ module ChannelMessageCodes
   #
   # Protocol 2:
   #  * removed DUMP_CMD
-  PROTOCOL_VERSION = 3
+  PROTOCOL_VERSION = 4
 
   MAX_SERVICE_HANDLE = 1024
   FIRST_USER_HANDLE = 1025
@@ -55,7 +60,6 @@ module ChannelMessageCodes
     5 => :FORGET_CMD,
     6 => :WRITE_TO_CMD,
     7 => :FORWARD_TO_CMD,
-    8 => :PASS_ACCESS_TO_CMD,
     9 => :READ_CMD,
     10 => :READP_CMD,
     11 => :TAKE_CMD,
@@ -88,8 +92,6 @@ module ChannelMessageCodes
     2 => :ACK_RESP,
     3 => :TUPLE_RESP,
     4 => :TUPLE_NIL_RESP,
-    5 => :TUPLE_WITH_RIGHTS_RESP,
-    6 => :ACCESS_RIGHT_RESP,
     7 => :HANDLE_RESP
   }
 

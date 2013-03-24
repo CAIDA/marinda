@@ -13,8 +13,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -58,8 +57,8 @@ class Channel
   CLIENT_MESSAGE_LENGTH_SIZE = 2  # num bytes in length field of client msg
   READ_SIZE = 16384   # num bytes to read at once with sysread
 
-  ReadBuffer = Struct.new :length, :payload, :want_io
-  WriteBuffer = Struct.new :payload, :file
+  ReadBuffer = Struct.new :length, :payload
+  WriteBuffer = Struct.new :payload
 
   OPERATION_TO_COMMAND = {
     :read_all => READ_ALL_CMD, :take_all => TAKE_ALL_CMD,
@@ -163,7 +162,6 @@ class Channel
     @dispatch[FORGET_CMD] = method :forget_peer
     @dispatch[WRITE_TO_CMD] = method :write_to
     @dispatch[FORWARD_TO_CMD] = method :forward_to
-    @dispatch[PASS_ACCESS_TO_CMD] = method :pass_access_to
     @dispatch[READ_CMD] = method :execute_singleton_command
     @dispatch[READP_CMD] = method :execute_singleton_command
     @dispatch[TAKE_CMD] = method :execute_singleton_command
@@ -201,13 +199,13 @@ class Channel
 
   #----------------------------------------------------------------------
 
-  def handle_client_message(payload, fd)
+  def handle_client_message(payload)
     fail_connection unless payload
 
     $log.debug "Channel#handle_client_message: payload=%p",
       payload if $debug_client_commands
     reqnum = payload.unpack("C").first
-    command, *arguments = decode_command reqnum, payload[1..-1], fd
+    command, *arguments = decode_command reqnum, payload[1..-1]
     $log.debug "Channel#handle_client_message: received command %d (%s)",
       command, CLIENT_COMMANDS[command] if $debug_client_commands
 
@@ -292,9 +290,9 @@ class Channel
 
 
   def hello(reqnum, command, client_protocol, client_banner)
-    if client_protocol <= 2 || client_protocol > PROTOCOL_VERSION
+    if client_protocol <= 3 || client_protocol > PROTOCOL_VERSION
       raise ChannelProtocolUnsupportedError,
-       "protocol version not supported; must be >= 3 and <= #{PROTOCOL_VERSION}"
+       "protocol version not supported; must be >= 4 and <= #{PROTOCOL_VERSION}"
     else
       name_len = @space.node_name.length
       banner = "Marinda Ruby local server v#{Marinda::VERSION}"
@@ -360,35 +358,6 @@ class Channel
     if port
       tuple.forwarder = @private_port
       @space.region_write port, tuple, self
-    end
-    send_ack reqnum
-  end
-
-
-  def pass_access_to(reqnum, command, peer, tuple, fd)
-    $log.debug "client pass_access_to(%p, %p, %p)",
-      peer, tuple, fd if $debug_client_commands
-
-    # NOTE: Check for privilege now *after* doing recv_io, so that the passed
-    #       file descriptor won't be stuck in limbo.
-    unless @flags.can_write? && @flags.can_pass_access?
-      fd.close rescue nil
-      fail_privilege
-    end
-
-    port = get_peer_port peer
-    if port
-      if Port.global? port
-	send_error reqnum, ERRORSUB_NOT_SUPPORTED,
-	  "passing file descriptor not supported in global region"
-	fd.close rescue nil
-	return
-      else
-	tuple.access_fd = fd
-	@space.region_write port, tuple, self
-      end
-    else
-      fd.close rescue nil
     end
     send_ack reqnum
   end
@@ -590,13 +559,11 @@ class Channel
     when FORGET_CMD
       return payload.unpack("CN")
 
-    when WRITE_TO_CMD, FORWARD_TO_CMD, PASS_ACCESS_TO_CMD
+    when WRITE_TO_CMD, FORWARD_TO_CMD
       peer = payload[1..4].unpack("N").first
       port = (code == FORWARD_TO_CMD ? @peer_port : @private_port)
       values_mio = payload[5 ... payload.length]
-      retval = [ code, peer, Tuple.new(port, values_mio) ]
-      retval << fd if code == PASS_ACCESS_TO_CMD
-      return retval
+      return [ code, peer, Tuple.new(port, values_mio) ]
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, TAKE_PRIV_CMD,
 	TAKEP_PRIV_CMD, READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
@@ -630,11 +597,6 @@ class Channel
   # {tuple} should be instance of Tuple or nil
   def send_tuple(reqnum, tuple)
     case
-    when tuple && tuple.access_fd
-      @peer_port = tuple.sender
-      send_with_fd reqnum, tuple.access_fd,
-	"Ca*", TUPLE_WITH_RIGHTS_RESP, tuple.values_mio
-      tuple.access_fd = nil
     when tuple
       @peer_port = tuple.sender
       send reqnum, "Ca*", TUPLE_RESP, tuple.values_mio
@@ -645,26 +607,16 @@ class Channel
   end
 
 
-  def send_access_right(reqnum, fd)
-    send_with_fd reqnum, fd, "C", ACCESS_RIGHT_RESP
-  end
-
-
   def send_error(reqnum, code, msg)
     send reqnum, "CCa*", ERROR_RESP, code, msg
   end
 
 
   def send(reqnum, format, *values)
-    send_with_fd reqnum, nil, format, *values
-  end
-
-
-  def send_with_fd(reqnum, fd, format, *values)
     payload = [ reqnum ].pack("C") + values.pack(format)
     length = [ payload.length ].pack "n"
     message = length + payload
-    @write_queue << WriteBuffer[message, fd]
+    @write_queue << WriteBuffer[message]
     @watcher.loop.add_io_events @watcher, :w
   end
 
@@ -686,68 +638,51 @@ class Channel
 
   # I/O events from LocalSpaceEventLoop -----------------------------------
 
-  # NOTE: This only works with Unix domain sockets, not general TCP sockets.
   def read_data(sock, timestamp)
     shutdown_connection = false
-    @messages.clear  # [ [payload, file] ]
+    @messages.clear  # [ payload ]
     @read_buffer.payload ||= ""
 
     begin
-      if @read_buffer.want_io
-	fd = sock.recv_io
-	raise EOFError, "client protocol error: no file descriptor" unless fd
-	@messages << [@read_buffer.payload, fd]
-	@read_buffer.length = nil
-	@read_buffer.payload = ""
-	@read_buffer.want_io = nil
-      else
-	data = sock.read_nonblock READ_SIZE
-        $log.debug "Channel#read_data from %p: %p",
-          sock, data if $debug_client_io_bytes
+      data = sock.read_nonblock READ_SIZE
+      $log.debug "Channel#read_data from %p: %p",
+      sock, data if $debug_client_io_bytes
 
-	start = 0
-	while start < data.length
-	  data_left = data.length - start
+      start = 0
+      while start < data.length
+        data_left = data.length - start
 
-	  desired_length = @read_buffer.length || CLIENT_MESSAGE_LENGTH_SIZE
-	  fill_amount = desired_length - @read_buffer.payload.length
-	  usable_amount = [fill_amount, data_left].min
+        desired_length = @read_buffer.length || CLIENT_MESSAGE_LENGTH_SIZE
+        fill_amount = desired_length - @read_buffer.payload.length
+        usable_amount = [fill_amount, data_left].min
 
-	  @read_buffer.payload << data[start, usable_amount]
-	  start += usable_amount
+        @read_buffer.payload << data[start, usable_amount]
+        start += usable_amount
 
-	  if usable_amount == fill_amount
-	    if @read_buffer.length
-              if $debug_client_io_bytes
-                $log.debug "Channel#read_data: @read_buffer.length = %d",
-                  @read_buffer.length
-                $log.debug "Channel#read_data: @read_buffer.payload = %p",
-                  @read_buffer.payload
-              end
+        if usable_amount == fill_amount
+          if @read_buffer.length
+            if $debug_client_io_bytes
+              $log.debug "Channel#read_data: @read_buffer.length = %d",
+              @read_buffer.length
+              $log.debug "Channel#read_data: @read_buffer.payload = %p",
+              @read_buffer.payload
+            end
 
-              code = @read_buffer.payload.unpack("CC")[1]
-	      if code == ChannelMessageCodes::PASS_ACCESS_TO_CMD
-		if data.length - start > 0
-		  raise EOFError, "client protocol error: no file descriptor"
-		end
-		@read_buffer.want_io = true
-	      else
-		@messages << [@read_buffer.payload, nil]
-		@read_buffer.length = nil
-		@read_buffer.payload = ""
-	      end
-	    else
-	      @read_buffer.length = @read_buffer.payload.unpack("n").first
-	      @read_buffer.payload = ""
-              if $debug_client_io_bytes
-                $log.debug "Channel#read_data: message length = %d",
-                  @read_buffer.length
-              end
-	      if @read_buffer.length == 0
-		raise EOFError, "client protocol error: message length == 0"
-	      end
-	    end
-	  end
+            code = @read_buffer.payload.unpack("CC")[1]
+            @messages << @read_buffer.payload
+            @read_buffer.length = nil
+            @read_buffer.payload = ""
+          else
+            @read_buffer.length = @read_buffer.payload.unpack("n").first
+            @read_buffer.payload = ""
+            if $debug_client_io_bytes
+              $log.debug "Channel#read_data: message length = %d",
+              @read_buffer.length
+            end
+            if @read_buffer.length == 0
+              raise EOFError, "client protocol error: message length == 0"
+            end
+          end
 	end
       end
 
@@ -785,9 +720,9 @@ class Channel
 
     reqnum = nil
     begin
-      @messages.each do |payload, file|
+      @messages.each do |payload|
         reqnum = payload.unpack("C").first
-        handle_client_message payload, file
+        handle_client_message payload
       end
 
     rescue ChannelPrivilegeError
@@ -811,36 +746,19 @@ class Channel
   end
 
 
-  # NOTE: This only works with Unix domain sockets, not general TCP sockets.
   def write_data(sock, timestamp)
     return if @write_queue.empty?  # nothing to do -- spurious write readiness
     buffer = @write_queue.first
 
     begin
-      if buffer.payload.length > 0
-	n = sock.write_nonblock buffer.payload
-	data_written = buffer.payload.slice! 0, n
-        if $debug_client_io_bytes
-          $log.debug "Channel#write_data to %p: wrote %d bytes, %d left: %p",
-            sock, n, buffer.payload.length, data_written
-        end
+      n = sock.write_nonblock buffer.payload
+      data_written = buffer.payload.slice! 0, n
+      if $debug_client_io_bytes
+        $log.debug "Channel#write_data to %p: wrote %d bytes, %d left: %p",
+          sock, n, buffer.payload.length, data_written
       end
 
-      if buffer.payload.length == 0 && buffer.file
-        $log.debug "Channel#write_data passing file %p over %p",
-          buffer.file, sock if $debug_client_io_bytes
-
-	sock.send_io buffer.file
-        $log.debug "Channel#write_data sent file %p over %p",
-          buffer.file, sock if $debug_client_io_bytes
-
-        # XXX Should we close the file here??  Is there a race condition,
-        #     with the client possibly receiving a closed file descriptor?
-	buffer.file.close rescue nil
-	buffer.file = nil
-      end
-
-      @write_queue.shift if buffer.payload.length == 0 && buffer.file == nil
+      @write_queue.shift if buffer.payload.length == 0
       @watcher.loop.remove_io_events @watcher, :w if @write_queue.empty?
 
     rescue Errno::EINTR  # might be raised by write_nonblock
@@ -875,15 +793,7 @@ class Channel
     @connected = false
     cancel_active_command()
     @space.unregister_channel self
-
-    @write_queue.each do |buffer|
-      if buffer.file
-        buffer.file.close rescue nil
-        buffer.file = nil
-      end
-    end
     @write_queue.clear
-
     @watcher.loop.remove_io @watcher
     @watcher = nil
     sock.close rescue nil

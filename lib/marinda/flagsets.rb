@@ -4,8 +4,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -38,8 +37,7 @@ module ChannelFlagReaders
   read_flag :can_write_sticky, 0x10
   read_flag :can_take, 0x20
   read_flag :can_forward, 0x40
-  read_flag :can_pass_access, 0x80
-  read_flag :can_open_any_port, 0x100
+  read_flag :can_open_any_port, 0x80
 
 end
 
@@ -55,8 +53,7 @@ class ChannelFlags
   flag :can_write_sticky, 0x10
   flag :can_take, 0x20
   flag :can_forward, 0x40
-  flag :can_pass_access, 0x80
-  flag :can_open_any_port, 0x100
+  flag :can_open_any_port, 0x80
 
   attr_accessor :flags
 
@@ -76,7 +73,6 @@ class ChannelFlags
     self.can_write_sticky = true
     self.can_take = true
     self.can_forward = true
-    self.can_pass_access = true
     self.can_open_any_port = true
   end
 
@@ -86,7 +82,6 @@ class ChannelFlags
     self.can_write_sticky = false
     self.can_take = true
     self.can_forward = false
-    self.can_pass_access = true
     self.can_open_any_port = false
 
     # XXX enable privileges during development only

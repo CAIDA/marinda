@@ -17,8 +17,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010,2011 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -690,17 +689,6 @@ class LocalSpace
     else
       $log.info "LocalSpace#region_result: discarding message to " +
         "dead channel %#x\n", channel.object_id
-
-      case operation
-      when :take, :takep, :take_all, :consume, :consume_stream
-        if tuple.access_fd
-          tuple.access_fd.close rescue nil
-          tuple.access_fd = nil
-        end
-        # XXX possibly return tuple into region
-      else
-        fail "INTERNAL ERROR: unhandled operation %p", operation
-      end
     end
   end
 
