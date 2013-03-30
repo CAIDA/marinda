@@ -52,13 +52,11 @@ end
 
 #===========================================================================
 
-SOCKET = "/tmp/localts-test.sock"
-s = UNIXSocket.open SOCKET
-$c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
-$c.hello
-$c2 = Marinda::VerboseClient.new($c.open_port($options.port), "c2")
-$g2 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g2")
-
+sock_path = "/tmp/localts-test.sock"
+$c2 = Marinda::Client.new sock_path, :port => $options.port, :scope => :local
+$g2 = Marinda::Client.new sock_path, :port => $options.port
+$c2 = Marinda::VerboseClient.new $c2, "c2"
+$g2 = Marinda::VerboseClient.new $g2, "g2"
 
 $loop = Marinda::ClientEventLoop.new
 

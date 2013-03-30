@@ -21,8 +21,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010,2011 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -424,15 +423,7 @@ class GlobalSpace
     @eva_loop = eva_loop
     @global_state = GlobalState.new state_db_path
 
-    @services = {}
-    @last_public_portnum = @global_state.get_last_public_portnum()
-    @last_private_portnum = @global_state.get_last_private_portnum()
-    @commons_port = Port.make_public_global
-    @commons_region = Region.new self, @commons_port
-    @regions = {   # port => global public & private regions
-      @commons_port => @commons_region
-    }
-
+    @regions = {}   # global port => global regions
     @contexts = {}       # node_id => Context
 
     restore_state()
@@ -855,25 +846,23 @@ class GlobalSpace
   def decode_command(reqnum, command, payload)
     case command
     when WRITE_CMD
-      flags, recipient, sender, forwarder, values_mio =
-        payload.unpack("Nwwwa*") 
+      flags, recipient, values_mio = payload.unpack("Nwa*") 
 
-      tuple = Tuple.new sender, values_mio
+      tuple = Tuple.new values_mio
       tuple.flags = flags
-      tuple.forwarder = (forwarder == 0 ? nil : forwarder)
       return [recipient, tuple]
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, READ_ALL_CMD, TAKE_ALL_CMD,
       MONITOR_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       if command == READ_ALL_CMD || command == TAKE_ALL_CMD ||
           command == MONITOR_CMD || command == CONSUME_CMD
-	recipient, sender, cursor, values_mio = payload.unpack("wwwa*")
+	recipient, cursor, values_mio = payload.unpack("wwa*")
       else
-	recipient, sender, values_mio = payload.unpack("wwa*")
+	recipient, values_mio = payload.unpack("wa*")
 	cursor = nil
       end
 
-      template = Template.new sender, values_mio
+      template = Template.new values_mio
       template.reqnum = reqnum
       retval = [recipient, template]
       retval << cursor if cursor
@@ -882,19 +871,16 @@ class GlobalSpace
     when CANCEL_CMD
       return payload.unpack("ww")  # recipient, request.mux_seqnum
 
-    when ACK_CMD, FIN_CMD, CREATE_PRIVATE_REGION_CMD
+    when ACK_CMD, FIN_CMD
       # nothing further to extract
       return []
-
-    when DELETE_PRIVATE_REGION_CMD, CREATE_REGION_PAIR_CMD
-      return payload.unpack("w")  # port
 
     when HEARTBEAT_CMD
       return payload.unpack("N")  # timestamp
 
     when HELLO_CMD
       protocol, rest = payload.unpack("Na*")
-      if protocol <= 2 || protocol > PROTOCOL_VERSION
+      if protocol < MIN_PROTOCOL_VERSION || protocol > PROTOCOL_VERSION
         return [protocol, rest]  # don't bother decoding unsupported protocol
       else
         hello_node_id, hello_session_id, banner = rest.unpack("nwa*")
@@ -968,32 +954,6 @@ class GlobalSpace
       @contexts.delete context.node_id
       # don't respond with ACK or anything else
 
-    when CREATE_PRIVATE_REGION_CMD
-      region = create_private_region context.node_id, context.session_id
-      $log.info "created private region (%#x; port=%#x) for " +
-        "node %d (session_id=%#x)", region.object_id, region.port,
-        context.node_id, context.session_id
-      enq_port context, command_seqnum, region.port
-
-    when DELETE_PRIVATE_REGION_CMD
-      port = arguments[0]
-      $log.info "deleting region (port=%#x) for " +
-        "node %d (session_id=%#x)", port, context.node_id, context.session_id
-      delete_private_region port
-      enq_ack context, command_seqnum
-
-    when CREATE_REGION_PAIR_CMD
-      public_port = arguments[0]
-      public_region = create_public_region public_port
-      private_region = create_private_region context.node_id, context.session_id
-      $log.info "created public region (%#x; port=%#x) for " +
-        "node %d (session_id=%#x)", public_region.object_id,
-        public_region.port, context.node_id, context.session_id
-      $log.info "created private region (%#x; port=%#x) for " +
-        "node %d (session_id=%#x)", private_region.object_id,
-        private_region.port, context.node_id, context.session_id
-      enq_port context, command_seqnum, private_region.port
-
     when HEARTBEAT_CMD
       timestamp = arguments[0]
       $log.debug "heartbeat from node %d, sent %d", context.node_id, timestamp
@@ -1001,7 +961,7 @@ class GlobalSpace
 
     when HELLO_CMD
       protocol, hello_node_id, hello_session_id, banner = arguments
-      if protocol <= 2 || protocol > PROTOCOL_VERSION
+      if protocol < MIN_PROTOCOL_VERSION || protocol > PROTOCOL_VERSION
         $log.err "node %d is using the unsupported v%d protocol; force " +
           "disconnecting node", context.node_id, protocol
         error_text = sprintf "unsupported v%d protocol", protocol
@@ -1079,7 +1039,6 @@ class GlobalSpace
       region_cancel request.port, request
     end
     context.reset_session_state()
-    delete_private_regions_of_node context.node_id
   end
 
 
@@ -1168,23 +1127,15 @@ class GlobalSpace
     if tuple
       response = TUPLE_RESP
       flags = tuple.flags
-      sender = tuple.sender
-      forwarder = (tuple.forwarder || 0)
       seqnum = tuple.seqnum
-      contents = [ response, command_seqnum, flags, sender, forwarder,
-                   seqnum, tuple.values_mio ].pack("CwNwwwa*")
+      contents = [ response, command_seqnum, flags, seqnum, tuple.values_mio ]
+        .pack("CwNwa*")
     else
       response = TUPLE_NIL_RESP
       contents = [ response, command_seqnum ].pack("Cw")
     end
 
     enq_message context, response, contents
-  end
-
-
-  def enq_port(context, command_seqnum, port)
-    contents = [ PORT_RESP, command_seqnum, port ].pack("Cww")
-    enq_message context, PORT_RESP, contents
   end
 
 
@@ -1219,146 +1170,45 @@ class GlobalSpace
   end
 
 
-  #--------------------------------------------------------------------------
-
-  # XXX don't check existence
-  def allocate_public_port
-    begin
-      @last_public_portnum += 1
-      retval = Port.make_public_local @last_public_portnum
-    end while @regions.has_key? retval
-
-    @global_state.set_last_public_portnum @last_public_portnum
-    retval
-  end
-
-
-  # XXX don't check existence
-  def allocate_private_port
-    begin
-      @last_private_portnum += 1
-      retval = Port.make_private Port::GLOBAL_SPACE_NODE_ID,
-	@last_private_portnum
-    end while @regions.has_key? retval
-
-    @global_state.set_last_private_portnum @last_private_portnum
-    retval
-  end
-
-
-  # Returns the newly allocated region.
-  def create_public_region(port=nil)
-    port ||= allocate_public_port()
-    @regions[port] ||= Region.new self, port
-  end
-
-
-  # Returns the newly allocated region.
-  def create_private_region(node_id, session_id)
-    port = allocate_private_port()
-    region = Region.new self, port
-    region.node_id = node_id
-    region.session_id = session_id
-    @regions[port] = region
-  end
-
-
-  # NOTE: It's more safe to purge private regions by node ID than by session
-  #       ID, since the node ID can't been spoofed, while the session ID
-  #       must be accepted from a potentially unreliable source (the remote
-  #       GlobalSpaceMux).  Purging by session ID would allow a malicious
-  #       or malfunctioning mux to delete private regions of other nodes.
-  #
-  #       Purging by node ID also ensures that private regions never slip
-  #       through and end up being persistent garbage.
-  def delete_private_regions_of_node(node_id)
-    ports = []
-    @regions.each do |port, region|
-      if Port.private?(port) && region.node_id == node_id
-        $log.info "purging defunct private region %#x of node %d " +
-          "(session_id=%#x)", port, node_id, region.session_id
-        ports << port
-      end
-    end
-
-    ports.each do |port|
-      delete_private_region port
-    end
-  end
-
-
-  def delete_private_region(port)
-    region = @regions.delete port
-    region.shutdown if region
-  end
-
-
   # Region access methods ---------------------------------------------------
   #
   # Only execute operations on Regions through these methods, so that
   # details are localized here.
 
+  def find_region(port)
+    @regions[port] || (@regions[port] = Region.new self, port)
+  end
+
   def region_write(port, tuple, context)
-    region = @regions[port]
-    # note: a private peer region may no longer exist--tolerate this
-    region.write tuple, context if region
+    find_region(port).write tuple, context
   end
 
   # operation == :read, :readp, :take, :takep
   def region_singleton_operation(operation, port, template, context)
-    @regions[port].__send__ operation, template, context
+    find_region(port).__send__ operation, template, context
   end
 
   # operation == :read_all, :take_all, :monitor, :consume
   def region_iteration_operation(operation, port, template, context, cursor=0)
-    @regions[port].__send__ operation, template, context, cursor
+    find_region(port).__send__ operation, template, context, cursor
   end
 
   # operation == :monitor_stream_setup, :consume_stream_setup,
   #              :monitor_stream_start, :consume_stream_start
   def region_stream_operation(operation, port, template, context)
-    @regions[port].__send__ operation, template, context
+    find_region(port).__send__ operation, template, context
   end
 
   def region_cancel(port, request)
-    @regions[port].cancel request
+    find_region(port).cancel request
   end
 
   def region_shutdown(port)
-    @regions[port].shutdown
+    find_region(port).shutdown
   end
 
   def region_dump(port, resource="all")
-    @regions[port].dump resource
-  end
-
-
-  # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-  # {service} may be integer, string, or symbol
-  def lookup_service(service)
-    @mutex.synchronize do
-      service = service.to_sym if service.kind_of? String
-      @services[service]
-    end
-  end
-
-  # {name} may be string or symbol
-  def register_service(name, index, region)
-    @mutex.synchronize do
-      name = name.to_sym if name.kind_of? String
-      @services[name] = region
-      @services[index] = region
-    end
-  end
-
-  # {name} may be string or symbol
-  def unregister_service(name, index)
-    @mutex.synchronize do
-      name = name.to_sym if name.kind_of? String
-      @services.delete name
-      @services.delete index
-    end
+    find_region(port).dump resource
   end
 
 

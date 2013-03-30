@@ -30,14 +30,9 @@ module ChannelFlagReaders
 
   include Flags
 
-  read_flag :is_global, 0x01
-  read_flag :is_commons, 0x02
-  read_flag :can_read, 0x04
-  read_flag :can_write, 0x08
-  read_flag :can_write_sticky, 0x10
-  read_flag :can_take, 0x20
-  read_flag :can_forward, 0x40
-  read_flag :can_open_any_port, 0x80
+  read_flag :can_read, 0x01
+  read_flag :can_write, 0x02
+  read_flag :can_take, 0x04
 
 end
 
@@ -46,14 +41,9 @@ class ChannelFlags
 
   include Flags
 
-  flag :is_global, 0x01
-  flag :is_commons, 0x02
-  flag :can_read, 0x04
-  flag :can_write, 0x08
-  flag :can_write_sticky, 0x10
-  flag :can_take, 0x20
-  flag :can_forward, 0x40
-  flag :can_open_any_port, 0x80
+  flag :can_read, 0x01
+  flag :can_write, 0x02
+  flag :can_take, 0x04
 
   attr_accessor :flags
 
@@ -61,33 +51,10 @@ class ChannelFlags
     @flags = flags
   end
 
-  def privileges
-    flags = ChannelFlags.new @flags
-    flags.is_global = flags.is_commons = false
-    flags
-  end
-
   def allow_all_privileges!
     self.can_read = true
     self.can_write = true
-    self.can_write_sticky = true
     self.can_take = true
-    self.can_forward = true
-    self.can_open_any_port = true
-  end
-
-  def allow_commons_privileges!
-    self.can_read = true
-    self.can_write = true
-    self.can_write_sticky = false
-    self.can_take = true
-    self.can_forward = false
-    self.can_open_any_port = false
-
-    # XXX enable privileges during development only
-    self.can_write_sticky = true
-    self.can_forward = true
-    self.can_open_any_port = true
   end
 
 end

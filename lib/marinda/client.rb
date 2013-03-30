@@ -31,6 +31,7 @@ require 'socket'
 require 'mioext'
 require 'marinda/msgcodes'
 require 'marinda/flagsets'
+require 'marinda/port'
 require 'marinda/version'
 
 module Marinda
@@ -74,7 +75,41 @@ class Client
   attr_reader :client_id, :run_id, :node_id, :node_name, :remote_banner
   attr_accessor :debug
 
-  def initialize(sock)
+
+  # $c = Marinda::Client.new "/tmp/localts-test.sock", :port => port,
+  #        :scope => :global # or :local
+  # default is global commons if no :port or :scope.
+  def initialize(sock_path, options={})
+    @sock = UNIXSocket.open sock_path
+    @port_number = Port::COMMONS      
+    @scope = Port::GLOBAL
+
+    options.each do |k, v|
+      case k
+      when :port
+        n = v.to_i
+        if n < Port::MIN_PORT_NUMBER || n > Port::MAX_PORT_NUMBER
+          raise ArgumentError, ":port option value out of range"
+        end
+        @port_number = n
+
+      when :scope
+        case v
+        when :local then @scope = Port::LOCAL
+        when :global then @scope = Port::GLOBAL
+        else
+          raise ArgumentError, ":scope option value invalid"
+        end
+
+      else
+        raise ArgumentError, "unknown option name"
+      end
+    end
+
+    @port = Port.make @scope, @port_number
+
+    #----------------------------------------------------------------------
+
     # A sequence number used to construct globally unique application-level IDs.
     @id = 0
 
@@ -97,7 +132,6 @@ class Client
     @flags = 0
     @protocol = 0
     @remote_banner = nil
-    @sock = sock
 
     # This is
     #
@@ -118,8 +152,6 @@ class Client
     @dispatch[READP_CMD] = method :async_receive_tuple
     @dispatch[TAKE_CMD] = method :async_receive_tuple
     @dispatch[TAKEP_CMD] = method :async_receive_tuple
-    @dispatch[TAKE_PRIV_CMD] = method :async_receive_tuple
-    @dispatch[TAKEP_PRIV_CMD] = method :async_receive_tuple
     @dispatch[READ_ALL_CMD] = method :async_execute_iteration
     @dispatch[TAKE_ALL_CMD] = method :async_execute_iteration
     @dispatch[MONITOR_CMD] = method :async_execute_iteration
@@ -127,7 +159,7 @@ class Client
     @dispatch[MONITOR_STREAM_CMD] = method :async_execute_stream_iteration
     @dispatch[CONSUME_STREAM_CMD] = method :async_execute_stream_iteration
 
-    @global_commons_channel = nil  # cached
+    hello()
   end
 
   private #===============================================================
@@ -220,9 +252,6 @@ class Client
     when TUPLE_NIL_RESP
       return [ TUPLE_RESP, nil ]
 
-    when HANDLE_RESP
-      return payload.unpack("CN")
-
     when HELLO_RESP
       # command, protocol, flags, client_id, run_id, node_id,
       # (len, node_name), (len, banner)
@@ -250,12 +279,6 @@ class Client
 
   def receive_tuple
     response = receive TUPLE_RESP, TUPLE_NIL_RESP
-    return response[1]
-  end
-
-
-  def receive_handle
-    response = receive HANDLE_RESP
     return response[1]
   end
 
@@ -335,10 +358,8 @@ class Client
   end
 
 
-  public #================================================================
-
   def hello
-    send "CCa*", HELLO_CMD, PROTOCOL_VERSION,
+    send "CCwa*", HELLO_CMD, PROTOCOL_VERSION, @port,
       "Marinda Ruby client v#{Marinda::VERSION}"
 
     response = receive HELLO_RESP
@@ -351,52 +372,12 @@ class Client
   end
 
 
+  public #================================================================
+
   def write(tuple)
     raise ClientError if @active_command
     raise PrivilegeError unless can_write?
     send "Ca*", WRITE_CMD, MIO.encode(tuple)
-    receive_ack
-    true
-  end
-
-
-  def reply(tuple)
-    raise ClientError if @active_command
-    raise PrivilegeError unless can_write?
-    send "Ca*", REPLY_CMD, MIO.encode(tuple)
-    receive_ack
-    true
-  end
-
-
-  def remember_peer
-    raise ClientError if @active_command
-    send "C", REMEMBER_CMD
-    receive_handle
-  end
-
-
-  def forget_peer(peer)
-    raise ClientError if @active_command
-    send "CN", FORGET_CMD, peer
-    receive_ack
-    true
-  end
-
-
-  def write_to(peer, tuple)
-    raise ClientError if @active_command
-    raise PrivilegeError unless can_write?
-    send "CNa*", WRITE_TO_CMD, peer, MIO.encode(tuple)
-    receive_ack
-    true
-  end
-
-
-  def forward_to(peer, tuple)
-    raise ClientError if @active_command
-    raise PrivilegeError unless can_write? and can_forward?
-    send "CNa*", FORWARD_TO_CMD, peer, MIO.encode(tuple)
     receive_ack
     true
   end
@@ -430,20 +411,6 @@ class Client
     raise ClientError if @active_command
     raise PrivilegeError unless can_take?
     send "Ca*", TAKEP_CMD, MIO.encode(template)
-    receive_tuple
-  end
-
-
-  def take_priv(template)
-    raise ClientError if @active_command
-    send "Ca*", TAKE_PRIV_CMD, MIO.encode(template)
-    receive_tuple
-  end
-
-
-  def takep_priv(template)
-    raise ClientError if @active_command
-    send "Ca*", TAKEP_PRIV_CMD, MIO.encode(template)
     receive_tuple
   end
 
@@ -517,55 +484,6 @@ class Client
   end
 
 
-  def new_binding
-    raise ClientError if @active_command
-    send "C", CREATE_NEW_BINDING_CMD
-    channel = receive_channel
-    channel.hello
-    channel
-  end
-
-
-  def duplicate
-    raise ClientError if @active_command
-    send "C", DUPLICATE_CHANNEL_CMD
-    channel = receive_channel
-    channel.hello
-    channel
-  end
-
-
-  def global_commons
-    raise ClientError if @active_command
-    unless @global_commons_channel
-      send "C", CREATE_GLOBAL_COMMONS_CHANNEL_CMD
-      channel = receive_channel
-      channel.hello
-      @global_commons_channel = channel
-    end
-    @global_commons_channel 
-  end
-
-
-  # {portnum} should be a port number (not the full port value).
-  # This opens a public port with this port number in the same scope
-  # (local or global) as the current channel unless {want_global} is true,
-  # in which case the port is opened in the global scope.
-  #
-  # If {portnum} is nil or 0, then this creates a new region using the next
-  # available port number.
-  def open_port(portnum=nil, want_global=nil)
-    raise ClientError if @active_command
-    raise PrivilegeError unless can_open_any_port?
-    portnum ||= 0
-    want_global = ((want_global || is_global?) ? 1 : 0)
-    send "CwC", OPEN_PORT_CMD, portnum, want_global
-    channel = receive_channel
-    channel.hello
-    channel
-  end
-
-
   def gen_id
     @id += 1
     sprintf "%x:%x:%x", @id, @client_id, @run_id
@@ -612,24 +530,6 @@ class Client
     raise PrivilegeError unless can_take?
     send "Ca*", TAKEP_CMD, MIO.encode(template)
     @active_command = @dispatch[TAKEP_CMD]
-    @async_callback = block
-  end
-
-
-  def take_priv_async(template, &block)
-    raise ArgumentError, "missing block" unless block
-    raise ClientError if @active_command
-    send "Ca*", TAKE_PRIV_CMD, MIO.encode(template)
-    @active_command = @dispatch[TAKE_PRIV_CMD]
-    @async_callback = block
-  end
-
-
-  def takep_priv_async(template, &block)
-    raise ArgumentError, "missing block" unless block
-    raise ClientError if @active_command
-    send "Ca*", TAKEP_PRIV_CMD, MIO.encode(template)
-    @active_command = @dispatch[TAKEP_PRIV_CMD]
     @async_callback = block
   end
 

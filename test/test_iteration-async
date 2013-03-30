@@ -113,14 +113,16 @@ end
 
 Thread.abort_on_exception = true
 
-SOCKET = "/tmp/localts-test.sock"
-s = UNIXSocket.open SOCKET
-$c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
-$c.hello
-$c1 = Marinda::VerboseClient.new($c.open_port($options.port), "c1")
-$c2 = Marinda::VerboseClient.new($c.open_port($options.port), "c2")
-$g1 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g1")
-$g2 = Marinda::VerboseClient.new($c.open_port($options.port, true), "g2")
+sock_path = "/tmp/localts-test.sock"
+$c1 = Marinda::Client.new sock_path, :port => $options.port, :scope => :local
+$c2 = Marinda::Client.new sock_path, :port => $options.port, :scope => :local
+$g1 = Marinda::Client.new sock_path, :port => $options.port
+$g2 = Marinda::Client.new sock_path, :port => $options.port
+
+$c1 = Marinda::VerboseClient.new $c1, "c1"
+$c2 = Marinda::VerboseClient.new $c2, "c2"
+$g1 = Marinda::VerboseClient.new $g1, "g1"
+$g2 = Marinda::VerboseClient.new $g2, "g2"
 
 $loop.add_source $c1
 #$loop.add_source $c2

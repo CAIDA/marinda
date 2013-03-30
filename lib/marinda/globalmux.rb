@@ -6,8 +6,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010,2011 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -202,12 +201,10 @@ class GlobalSpaceMux
       return payload.unpack("w")  # command_seqnum
 
     when TUPLE_RESP
-      command_seqnum, flags, sender, forwarder, seqnum, values_mio =
-	payload.unpack("wNwwwa*")
+      command_seqnum, flags, seqnum, values_mio = payload.unpack("wNwa*")
 
-      tuple = Tuple.new sender, values_mio
+      tuple = Tuple.new values_mio
       tuple.flags = flags
-      tuple.forwarder = (forwarder == 0 ? nil : forwarder)
       tuple.seqnum = seqnum
       return [command_seqnum, tuple]
 
@@ -215,9 +212,6 @@ class GlobalSpaceMux
       retval = payload.unpack("w")  # command_seqnum
       retval << nil
       return retval
-
-    when PORT_RESP
-      return payload.unpack("ww")  # command_seqnum, port
 
     when HEARTBEAT_RESP
       return payload.unpack("wN")  # command_seqnum, timestamp
@@ -228,7 +222,7 @@ class GlobalSpaceMux
         $log.err "global server rejected connection negotiation with error " +
           "%p", rest
         exit 1
-      elsif protocol == 1 || protocol > PROTOCOL_VERSION
+      elsif protocol < MIN_PROTOCOL_VERSION || protocol > PROTOCOL_VERSION
         $log.err "global server is running the unsupported v%d protocol",
           protocol
         exit 1
@@ -301,7 +295,7 @@ class GlobalSpaceMux
     when ACK_RESP
       # nothing further to do
 
-    when TUPLE_RESP, TUPLE_NIL_RESP, PORT_RESP
+    when TUPLE_RESP, TUPLE_NIL_RESP
       request = message.request
       if request.instance_of? GlobalSpaceRequest
         request.worker.__send__ request.result_method, request.request_data,
@@ -382,21 +376,17 @@ class GlobalSpaceMux
   def enq_write(recipient, tuple)
     command = WRITE_CMD
     flags = tuple.flags
-    sender = tuple.sender
-    forwarder = (tuple.forwarder || 0)
-    contents = [ command, flags, recipient, sender, forwarder,
-                 tuple.values_mio ].pack("CNwwwa*")
+    contents = [ command, flags, recipient, tuple.values_mio ].pack("CNwa*")
     enq_message command, contents
   end
 
 
   def enq_command(command, recipient, request, cursor=nil)
-    sender = request.template.sender
     values_mio = request.template.values_mio
     if cursor
-      contents = [command, recipient, sender, cursor, values_mio].pack("Cwwwa*")
+      contents = [command, recipient, cursor, values_mio].pack("Cwwa*")
     else
-      contents = [command, recipient, sender, values_mio ].pack("Cwwa*")
+      contents = [command, recipient, values_mio ].pack("Cwa*")
     end
     enq_message command, contents, request
   end
@@ -419,31 +409,6 @@ class GlobalSpaceMux
     command = ACK_CMD
     contents = [ command ].pack("C")
     enq_message command, contents
-  end
-
-
-  def enq_create_private_region_command(sender, request_data)
-    command = CREATE_PRIVATE_REGION_CMD
-    contents = [ command ].pack("C")
-    request = GlobalSpaceRequest.new sender, :global_private_region_created,
-      request_data
-    enq_message command, contents, request
-  end
-
-
-  def enq_delete_private_region_command(sender, private_port)
-    command = DELETE_PRIVATE_REGION_CMD
-    contents = [ command, private_port ].pack("Cw")
-    enq_message command, contents
-  end
-
-
-  def enq_create_region_pair_command(sender, public_port, request_data)
-    command = CREATE_REGION_PAIR_CMD
-    contents = [ command, public_port ].pack("Cw")
-    request = GlobalSpaceRequest.new sender, :global_region_pair_created,
-      request_data
-    enq_message command, contents, request
   end
 
 
@@ -657,27 +622,6 @@ class GlobalSpaceMux
     @watcher = nil
     sock.close rescue nil
     raise GlobalSpaceConnectionLost
-  end
-
-
-  # Events from LocalSpace --------------------------------------------------
-
-  # response: [:global_private_region_created, GlobalSpaceMux#self,
-  #            request_data]
-  def create_private_region(sender, request_data)
-    enq_create_private_region_command sender, request_data
-  end
-
-
-  # no response
-  def delete_private_region(sender, private_port)
-    enq_delete_private_region_command sender, private_port
-  end
-
-
-  # response: [:global_region_pair_created, GlobalSpaceMux#self, request_data]
-  def create_region_pair(sender, public_port, request_data)
-    enq_create_region_pair_command sender, public_port, request_data
   end
 
 

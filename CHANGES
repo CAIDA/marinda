@@ -1,3 +1,15 @@
+version 0.14.0, 2013-03-31
+  * directly incorporated Ruby Judy wrapper (formerly used rjudy gem)
+  * Marinda::Client.new now takes a socket name and an optional specification
+    for the port to open
+  * removed the following methods on Marinda::Client: reply,
+    remember_peer, forget_peer, write_to, forward_to, take_priv,
+    takep_priv, take_priv_async, takep_priv_async, create_new_binding,
+    duplicate_channel, create_global_commons_channel, open_port
+  * removed support for passing open file descriptors between clients
+  * removed private regions
+  * made other numerous internal changes to greatly simplify the code
+
 version 0.13.7, 2013-05-02
   * added ClientEventLoop#set_deadline, a low-level mechanism for timing
     out the underlying select() call of the event loop provided by

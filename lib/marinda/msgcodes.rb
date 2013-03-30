@@ -31,9 +31,21 @@ module ChannelMessageCodes
 
   # Protocol 4:
   #  * removed
+  #     3 => :REPLY_CMD,
+  #     4 => :REMEMBER_CMD,
+  #     5 => :FORGET_CMD,
+  #     6 => :WRITE_TO_CMD,
+  #     7 => :FORWARD_TO_CMD,
   #     8 => :PASS_ACCESS_TO_CMD
+  #     13 => :TAKE_PRIV_CMD,
+  #     14 => :TAKEP_PRIV_CMD,
+  #     19 => :CREATE_NEW_BINDING_CMD,
+  #     20 => :DUPLICATE_CHANNEL_CMD,
+  #     21 => :CREATE_GLOBAL_COMMONS_CHANNEL_CMD,
+  #     22 => :OPEN_PORT_CMD,
   #     5 => :TUPLE_WITH_RIGHTS_RESP,
   #     6 => :ACCESS_RIGHT_RESP,
+  #     7 => :HANDLE_RESP
   #
   # Protocol 3:
   #  * switched to using MIO (instead of YAML) for encoding tuples/templates
@@ -44,6 +56,7 @@ module ChannelMessageCodes
   #
   # Protocol 2:
   #  * removed DUMP_CMD
+  MIN_PROTOCOL_VERSION = 4
   PROTOCOL_VERSION = 4
 
   MAX_SERVICE_HANDLE = 1024
@@ -55,25 +68,14 @@ module ChannelMessageCodes
     0 => :INVALID_CMD,
     1 => :HELLO_CMD,
     2 => :WRITE_CMD,
-    3 => :REPLY_CMD,
-    4 => :REMEMBER_CMD,
-    5 => :FORGET_CMD,
-    6 => :WRITE_TO_CMD,
-    7 => :FORWARD_TO_CMD,
     9 => :READ_CMD,
     10 => :READP_CMD,
     11 => :TAKE_CMD,
     12 => :TAKEP_CMD,
-    13 => :TAKE_PRIV_CMD,
-    14 => :TAKEP_PRIV_CMD,
     15 => :MONITOR_CMD,
     16 => :READ_ALL_CMD,
     17 => :NEXT_CMD,
     18 => :CANCEL_CMD,
-    19 => :CREATE_NEW_BINDING_CMD,
-    20 => :DUPLICATE_CHANNEL_CMD,
-    21 => :CREATE_GLOBAL_COMMONS_CHANNEL_CMD,
-    22 => :OPEN_PORT_CMD,
     23 => :TAKE_ALL_CMD,
     24 => :CONSUME_CMD,
     25 => :MONITOR_STREAM_CMD,
@@ -91,8 +93,7 @@ module ChannelMessageCodes
     1 => :HELLO_RESP,
     2 => :ACK_RESP,
     3 => :TUPLE_RESP,
-    4 => :TUPLE_NIL_RESP,
-    7 => :HANDLE_RESP
+    4 => :TUPLE_NIL_RESP
   }
 
   CHANNEL_RESPONSES.each do |value, key|
@@ -120,6 +121,13 @@ end
 
 module MuxMessageCodes
 
+  # Protocol 4:
+  #  * removed
+  #     13 => :CREATE_PRIVATE_REGION_CMD,
+  #     14 => :DELETE_PRIVATE_REGION_CMD,
+  #     15 => :CREATE_REGION_PAIR_CMD,
+  #     3 => :PORT_RESP,
+  #
   # Protocol 3:
   #  * switched to using MIO (instead of YAML) for encoding tuples/templates
   #  * added HEARTBEAT_RESP
@@ -130,7 +138,8 @@ module MuxMessageCodes
   # Protocol 2:
   #  * added session ID and node ID to HELLO_CMD & HELLO_RESP
   #  * removed DUMP_CMD
-  PROTOCOL_VERSION = 3
+  MIN_PROTOCOL_VERSION = 4
+  PROTOCOL_VERSION = 4
 
   MAX_SERVICE_HANDLE = 1024
   FIRST_USER_HANDLE = 1025
@@ -151,9 +160,6 @@ module MuxMessageCodes
     10 => :CANCEL_CMD,
     11 => :ACK_CMD,
     12 => :FIN_CMD,
-    13 => :CREATE_PRIVATE_REGION_CMD,
-    14 => :DELETE_PRIVATE_REGION_CMD,
-    15 => :CREATE_REGION_PAIR_CMD,
     16 => :TAKE_ALL_CMD,
     17 => :CONSUME_CMD,
     18 => :MONITOR_STREAM_CMD,
@@ -170,7 +176,6 @@ module MuxMessageCodes
     0 => :ERROR_RESP,
     1 => :HELLO_RESP,
     2 => :ACK_RESP,
-    3 => :PORT_RESP,
     4 => :TUPLE_RESP,
     5 => :TUPLE_NIL_RESP,
     6 => :HEARTBEAT_RESP

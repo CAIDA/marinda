@@ -52,8 +52,6 @@ class Channel
 
   include ChannelMessageCodes
 
-  PEER_HANDLE_MAX = 2**31 - 1   # max value storable with Array#pack("N")
-
   CLIENT_MESSAGE_LENGTH_SIZE = 2  # num bytes in length field of client msg
   READ_SIZE = 16384   # num bytes to read at once with sysread
 
@@ -71,7 +69,6 @@ class Channel
   REGION_METHOD = {
     READ_CMD => :read, READP_CMD => :readp,
     TAKE_CMD => :take, TAKEP_CMD => :takep,
-    TAKE_PRIV_CMD => :take, TAKEP_PRIV_CMD => :takep,
     READ_ALL_CMD => :read_all, TAKE_ALL_CMD => :take_all,
     MONITOR_CMD => :monitor, CONSUME_CMD => :consume,
     MONITOR_STREAM_CMD => :monitor_stream_setup,
@@ -86,14 +83,9 @@ class Channel
   COMMAND_PRIV_NEEDED = {
     READ_CMD => :read, READP_CMD => :read,
     TAKE_CMD => :take, TAKEP_CMD => :take,
-    TAKE_PRIV_CMD => :none, TAKEP_PRIV_CMD => :none,
     READ_ALL_CMD => :read, TAKE_ALL_CMD => :take,
     MONITOR_CMD => :read, CONSUME_CMD => :take,
     MONITOR_STREAM_CMD => :read, CONSUME_STREAM_CMD => :take
-  }
-
-  COMMAND_ON_PRIVATE_REGION = {
-    TAKE_PRIV_CMD => true, TAKEP_PRIV_CMD => true,
   }
 
   # An instance of IterationState is stored in @active_command to track
@@ -106,26 +98,18 @@ class Channel
   # cancelled by the client.
   IterationState = Struct.new :template, :cursor, :request
   
-  attr_reader :connected, :flags, :public_port, :private_port
+  attr_reader :connected, :flags, :port
 
   private #================================================================
 
-  def initialize(flags, client_id, space, public_port, private_port, watcher)
-    $log.info "created channel %d @ %#x (pubp=%#x, privp=%#x)", client_id,
-      object_id, public_port, private_port
-    @connected = true
+  def initialize(flags, client_id, space, watcher)
+    $log.info "created channel %d @ %#x", client_id, object_id
     @flags = flags  # ChannelFlags
-    @flags.is_global = Port.global? public_port
-    @flags.is_commons = Port.commons? public_port
     @client_id = client_id
     @space = space
-
-    @public_port = public_port
-    @private_port = private_port
-    @peer_port = @public_port
-    @address_book = []  # handle - FIRST_USER_HANDLE => private peer port
-
     @watcher = watcher
+    @connected = true
+    @port = nil
     @protocol = 0
 
     # State for read and write directions of the client socket; @read_buffer
@@ -154,20 +138,13 @@ class Channel
     @active_reqnum = nil
 
     @dispatch = []
-    #@dispatch[INVALID_CMD]
+    # @dispatch[INVALID_CMD]
     @dispatch[HELLO_CMD] = method :hello
     @dispatch[WRITE_CMD] = method :write
-    @dispatch[REPLY_CMD] = method :reply
-    @dispatch[REMEMBER_CMD] = method :remember_peer
-    @dispatch[FORGET_CMD] = method :forget_peer
-    @dispatch[WRITE_TO_CMD] = method :write_to
-    @dispatch[FORWARD_TO_CMD] = method :forward_to
     @dispatch[READ_CMD] = method :execute_singleton_command
     @dispatch[READP_CMD] = method :execute_singleton_command
     @dispatch[TAKE_CMD] = method :execute_singleton_command
     @dispatch[TAKEP_CMD] = method :execute_singleton_command
-    @dispatch[TAKE_PRIV_CMD] = method :execute_singleton_command
-    @dispatch[TAKEP_PRIV_CMD] = method :execute_singleton_command
     @dispatch[READ_ALL_CMD] = method :execute_iteration_command
     @dispatch[TAKE_ALL_CMD] = method :execute_iteration_command
     @dispatch[MONITOR_CMD] = method :execute_iteration_command
@@ -176,11 +153,6 @@ class Channel
     @dispatch[CONSUME_STREAM_CMD] = method :execute_stream_command
     @dispatch[NEXT_CMD] = method :next_value
     @dispatch[CANCEL_CMD] = method :cancel
-    @dispatch[CREATE_NEW_BINDING_CMD] = method :create_new_binding
-    @dispatch[DUPLICATE_CHANNEL_CMD] = method :duplicate_channel
-    @dispatch[CREATE_GLOBAL_COMMONS_CHANNEL_CMD] =
-      method :create_global_commons_channel
-    @dispatch[OPEN_PORT_CMD] = method :open_port
   end
 
 
@@ -194,6 +166,13 @@ class Channel
 
   def fail_connection
     raise ChannelError, "client disconnected"
+  end
+
+  def check_access_privilege(command)
+    case COMMAND_PRIV_NEEDED[command]
+    when :read then fail_privilege unless @flags.can_read?
+    when :take then fail_privilege unless @flags.can_take?
+    end
   end
 
 
@@ -210,6 +189,7 @@ class Channel
       command, CLIENT_COMMANDS[command] if $debug_client_commands
 
     fail_protocol if command == INVALID_CMD
+    fail_protocol if @port == nil && command != HELLO_CMD
 
     # It is a protocol error for a client to issue multiple commands without
     # waiting for responses.
@@ -270,18 +250,11 @@ class Channel
     command, state = @active_command
     case command
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD
-      @space.region_cancel @public_port, state
-
-    when TAKE_PRIV_CMD, TAKEP_PRIV_CMD
-      @space.region_cancel @private_port, state
+      @space.region_cancel @port, state
 
     when READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
       MONITOR_STREAM_CMD, CONSUME_STREAM_CMD  # NEXT_CMD is not allowed
-      @space.region_cancel @public_port, state.request if state.request
-
-    when CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
-	CREATE_GLOBAL_COMMONS_CHANNEL_CMD, OPEN_PORT_CMD
-      # can't cancel: state == lambda
+      @space.region_cancel @port, state.request if state.request
 
     else
       fail "INTERNAL ERROR: unexpected command '#{command}' in @active_command"
@@ -289,76 +262,30 @@ class Channel
   end
 
 
-  def hello(reqnum, command, client_protocol, client_banner)
-    if client_protocol <= 3 || client_protocol > PROTOCOL_VERSION
-      raise ChannelProtocolUnsupportedError,
-       "protocol version not supported; must be >= 4 and <= #{PROTOCOL_VERSION}"
-    else
-      name_len = @space.node_name.length
-      banner = "Marinda Ruby local server v#{Marinda::VERSION}"
-      banner_len = banner.length
-      @protocol = [ PROTOCOL_VERSION, client_protocol ].min
-      send reqnum, "CCNNGnna#{name_len}na#{banner_len}", HELLO_RESP, @protocol,
-        @flags.flags, @client_id, @space.run_id, @space.node_id,
-        name_len, @space.node_name, banner_len, banner
+  def hello(reqnum, command, client_protocol, port, client_banner)
+    if client_protocol < MIN_PROTOCOL_VERSION ||
+        client_protocol > PROTOCOL_VERSION
+      raise ChannelProtocolUnsupportedError, "protocol version not supported;"+
+        " must be >= #{MIN_PROTOCOL_VERSION} and <= #{PROTOCOL_VERSION}"
     end
+
+    @port = Port.check_port port
+    raise ChannelError, "bad port in hello" unless @port
+
+    name_len = @space.node_name.length
+    banner = "Marinda Ruby local server v#{Marinda::VERSION}"
+    banner_len = banner.length
+    @protocol = [ PROTOCOL_VERSION, client_protocol ].min
+    send reqnum, "CCNNGnna#{name_len}na#{banner_len}", HELLO_RESP, @protocol,
+      @flags.flags, @client_id, @space.run_id, @space.node_id,
+      name_len, @space.node_name, banner_len, banner
   end
 
 
   def write(reqnum, command, tuple)
     $log.debug "client write(%p)", tuple if $debug_client_commands
     fail_privilege unless @flags.can_write?
-    @space.region_write @public_port, tuple, self
-    send_ack reqnum
-  end
-
-
-  def reply(reqnum, command, tuple)
-    $log.debug "client reply(%p)", tuple if $debug_client_commands
-    fail_privilege unless @flags.can_write?
-    @space.region_write @peer_port, tuple, self
-    send_ack reqnum
-  end
-
-
-  def remember_peer(reqnum, command)
-    $log.debug "client remember_peer" if $debug_client_commands
-    i = @address_book.index(nil) || @address_book.length
-    if i > PEER_HANDLE_MAX
-      send_error reqnum, ERRORSUB_NO_SPACE, "too many remembered peers"
-    else
-      @address_book[i] = @peer_port
-      send reqnum, "CN", HANDLE_RESP, (i + FIRST_USER_HANDLE)
-    end
-  end
-
-
-  def forget_peer(reqnum, command, peer)
-    $log.debug "client forget_peer(%p)", peer if $debug_client_commands
-    peer -= FIRST_USER_HANDLE
-    @address_book[peer] = nil unless peer < 0 || peer >= @address_book.length
-    send_ack reqnum
-  end
-
-
-  def write_to(reqnum, command, peer, tuple)
-    $log.debug "client write_to(%p, %p)", peer, tuple if $debug_client_commands
-    fail_privilege unless @flags.can_write?
-    port = get_peer_port peer
-    @space.region_write port, tuple, self if port
-    send_ack reqnum
-  end
-
-
-  def forward_to(reqnum, command, peer, tuple)
-    $log.debug "client forward_to(%p, %p)",
-      peer, tuple if $debug_client_commands
-    fail_privilege unless @flags.can_write?
-    port = get_peer_port peer
-    if port
-      tuple.forwarder = @private_port
-      @space.region_write port, tuple, self
-    end
+    @space.region_write @port, tuple, self
     send_ack reqnum
   end
 
@@ -368,16 +295,10 @@ class Channel
     if $debug_client_commands
       $log.debug "client %s(%p)", CLIENT_COMMANDS[command], template
     end
-    case COMMAND_PRIV_NEEDED[command]
-    when :read
-      fail_privilege unless @flags.can_read?
-    when :take
-      fail_privilege unless @flags.can_take?
-    end
+    check_access_privilege command
 
-    port = (COMMAND_ON_PRIVATE_REGION[command] ? @private_port : @public_port)
     request, tuple = @space.region_singleton_operation REGION_METHOD[command],
-      port, template, self
+      @port, template, self
     handle_singleton_result reqnum, command, request, tuple
   end
 
@@ -387,16 +308,10 @@ class Channel
     if $debug_client_commands
       $log.debug "client %s(%p)", CLIENT_COMMANDS[command], template
     end
-    case COMMAND_PRIV_NEEDED[command]
-    when :read
-      fail_privilege unless @flags.can_read?
-    when :take
-      fail_privilege unless @flags.can_take?
-    end
+    check_access_privilege command
 
-    port = (COMMAND_ON_PRIVATE_REGION[command] ? @private_port : @public_port)
     request, tuple = @space.region_iteration_operation REGION_METHOD[command],
-      port, template, self
+      @port, template, self
     handle_iteration_result reqnum, command, template, request, tuple
   end
 
@@ -406,18 +321,11 @@ class Channel
     if $debug_client_commands
       $log.debug "client %s(%p)", CLIENT_COMMANDS[command], template
     end
-    case COMMAND_PRIV_NEEDED[command]
-    when :read
-      fail_privilege unless @flags.can_read?
-    when :take
-      fail_privilege unless @flags.can_take?
-    end
-
-    port = (COMMAND_ON_PRIVATE_REGION[command] ? @private_port : @public_port)
+    check_access_privilege command
 
     # First, set up the request in @active_command.
     request, tuple = @space.region_stream_operation REGION_METHOD[command],
-      port, template, self
+      @port, template, self
     handle_iteration_result reqnum, command, template, request, tuple
 
     # Stream over all existing matching tuples.
@@ -441,7 +349,7 @@ class Channel
     command, state = @active_command
     $log.debug "client next_value: state=%p", state if $debug_client_commands
     request, tuple = @space.region_iteration_operation REGION_METHOD[command],
-      @public_port, state.template, self, state.cursor
+      @port, state.template, self, state.cursor
     handle_iteration_result reqnum, command, state.template, request, tuple
   end
 
@@ -453,133 +361,28 @@ class Channel
   end
 
 
-  def create_new_binding(reqnum, command)
-    $log.debug "client create_new_binding" if $debug_client_commands
-    @active_command = [command,
-      lambda do |client_sock|
-	if client_sock
-	  send_access_right reqnum, client_sock
-	else
-	  send_error reqnum, ERRORSUB_NO_SPACE,
-	    "couldn't create new channel binding"
-	end
-	@active_command = nil
-      end ]
-
-    @space.create_new_binding self
-  end
-
-
-  def duplicate_channel(reqnum, command)
-    $log.debug "client duplicate_channel" if $debug_client_commands
-    @active_command = [command,
-      lambda do |client_sock|
-	if client_sock
-	  send_access_right reqnum, client_sock
-	else
-	  send_error reqnum, ERRORSUB_NO_SPACE, "couldn't duplicate channel"
-	end
-	@active_command = nil
-      end ]
-
-    @space.duplicate_channel self
-  end
-
-
-  def create_global_commons_channel(reqnum, command)
-    $log.debug "client create_global_commons_channel" if $debug_client_commands
-    @active_command = [command,
-      lambda do |client_sock|
-	if client_sock
-	  send_access_right reqnum, client_sock
-	else
-	  send_error reqnum, ERRORSUB_NO_SPACE,
-	    "couldn't create global commons channel"
-	end
-	@active_command = nil
-      end ]
-
-    flags = ChannelFlags.new
-    flags.allow_commons_privileges!
-    @space.open_port self, flags, Port::COMMONS_PORTNUM, true
-  end
-
-
-  # {portnum} should be a port number (not the full port value).
-  #  
-  # This opens a public port with this port number in the scope implied
-  # by
-  # (local or global) as the current channel.  The corresponding private
-  # port will be created at the same time.
-  #
-  # {portnum} can be 0 to open the next available port number.
-  #
-  # Technically, we could allow anyone to open Port::COMMONS_PORTNUM with
-  # this method, even without can_open_any_port privileges, but we disallow
-  # it because a commons port opened with this method may have greater
-  # privileges than one opened with create_global_commons_channel.
-  # You can think of the can_open_any_port privileges as granting permission
-  # to invoke the open_port *method* regardless of the actual port number
-  # requested.
-  def open_port(reqnum, command, portnum, want_global)
-    $log.debug "client open_port(%d)", portnum if $debug_client_commands
-    fail_privilege unless @flags.can_open_any_port?
-
-    @active_command = [command,
-      lambda do |client_sock|
-	if client_sock
-	  send_access_right reqnum, client_sock
-	else
-	  send_error reqnum, ERRORSUB_NO_SPACE, "couldn't open port"
-	end
-	@active_command = nil
-      end ]
-
-    # XXX think some more about what flags should be used in this call
-    @space.open_port self, @flags, portnum, want_global
-  end
-
-
   #--------------------------------------------------------------------------
 
-  def decode_command(reqnum, payload, fd)
+  def decode_command(reqnum, payload)
     code = payload.unpack("C").first
     case code
     when HELLO_CMD
-      return payload.unpack("CCa*")
+      return payload.unpack("CCwa*")
 
-    when WRITE_CMD, REPLY_CMD
+    when WRITE_CMD
       values_mio = payload[1 ... payload.length]
-      return [ code, Tuple.new(@private_port, values_mio) ]
+      return [ code, Tuple.new(values_mio) ]
 
-    when REMEMBER_CMD, CREATE_NEW_BINDING_CMD, DUPLICATE_CHANNEL_CMD,
-	CREATE_GLOBAL_COMMONS_CHANNEL_CMD
-      return [ code ]
-
-    when FORGET_CMD
-      return payload.unpack("CN")
-
-    when WRITE_TO_CMD, FORWARD_TO_CMD
-      peer = payload[1..4].unpack("N").first
-      port = (code == FORWARD_TO_CMD ? @peer_port : @private_port)
-      values_mio = payload[5 ... payload.length]
-      return [ code, peer, Tuple.new(port, values_mio) ]
-
-    when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, TAKE_PRIV_CMD,
-	TAKEP_PRIV_CMD, READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
+    when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD,
+	READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
         MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       values_mio = payload[1 ... payload.length]
-      template = Template.new @private_port, values_mio
+      template = Template.new values_mio
       template.reqnum = reqnum
       return [ code, template ]
 
     when NEXT_CMD, CANCEL_CMD
       return [ code ]
-
-    when OPEN_PORT_CMD
-      retval = payload.unpack("CwC")
-      retval[2] = (retval[2] != 0)  # turn want_global into a boolean
-      return retval
 
     else
       return [ INVALID_CMD,
@@ -598,7 +401,6 @@ class Channel
   def send_tuple(reqnum, tuple)
     case
     when tuple
-      @peer_port = tuple.sender
       send reqnum, "Ca*", TUPLE_RESP, tuple.values_mio
     else
       send reqnum, "C", TUPLE_NIL_RESP
@@ -618,19 +420,6 @@ class Channel
     message = length + payload
     @write_queue << WriteBuffer[message]
     @watcher.loop.add_io_events @watcher, :w
-  end
-
-
-  def get_peer_port(peer)
-    if peer < 0
-      nil
-    elsif peer < FIRST_USER_HANDLE
-      @space.lookup_service peer
-    elsif peer < FIRST_USER_HANDLE + @address_book.length
-      @address_book[peer - FIRST_USER_HANDLE]
-    else
-      nil
-    end
   end
 
 
@@ -833,28 +622,11 @@ class Channel
   end
 
 
-  # Events from LocalSpace ------------------------------------------------
-
-  def binding_created(new_channel, client_sock)
-    @active_command[1].call client_sock
-  end
-
-
-  def channel_duplicated(new_channel, client_sock)
-    @active_command[1].call client_sock
-  end
-
-
-  def port_opened(new_channel, client_sock)
-    @active_command[1].call client_sock
-  end
-
-
   # -----------------------------------------------------------------------
 
   def inspect
-    sprintf "\#<Marinda::Channel:%#x @client_id=%d, @public_port=%#x, " +
-      "@private_port=%#x>", object_id, @client_id, @public_port, @private_port
+    sprintf "\#<Marinda::Channel:%#x @client_id=%d, @port=%#x>",
+      object_id, @client_id, @port
   end
 
 end

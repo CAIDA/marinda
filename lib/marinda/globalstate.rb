@@ -3,8 +3,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -34,28 +33,6 @@ class GlobalState
 
   def initialize(state_db_path)
     @db = open_state_database state_db_path
-  end
-
-
-  def get_last_public_portnum
-    value = get_global_space_numeric_value "last_public_portnum"
-    value ? value : Port::PUBLIC_PORTNUM_RESERVED
-  end
-
-
-  def get_last_private_portnum
-    value = get_global_space_numeric_value "last_private_portnum"
-    value ? value : Port::PRIVATE_PORTNUM_RESERVED
-  end
-
-
-  def set_last_public_portnum(portnum, txn=@db)
-    set_global_space_value txn, "last_public_portnum", portnum
-  end
-
-
-  def set_last_private_portnum(portnum, txn=@db)
-    set_global_space_value txn, "last_private_portnum", portnum
   end
 
 

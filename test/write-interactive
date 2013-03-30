@@ -16,11 +16,9 @@ require 'marinda/verboseclient'
 
 Thread.abort_on_exception = true
 
-SOCKET = "/tmp/localts-test.sock"
-s = UNIXSocket.open SOCKET
-$c = Marinda::VerboseClient.new(Marinda::Client.new(s), "c")
-$c.hello
-$g = Marinda::VerboseClient.new $c.global_commons, "g"
+sock_path = "/tmp/localts-test.sock"
+$g = Marinda::Client.new sock_path
+$g = Marinda::VerboseClient.new $g, "g"
 
 i = 1
 while gets()
