@@ -1,6 +1,37 @@
 /*
- * Based on the SWIG output of Lyle Johnson's RJudy.
- */
+** Specialized Ruby wrapper around JudyL.
+**
+** This is based partly on Lyle Johnson's abandoned RJudy v1.0 circa 2002
+** (??) but with all SWIG wrapper code removed (the SWIG input file wasn't
+** provided in the RJudy distribution package so I had to hack the SWIG
+** output).  RJudy is licensed under LGPL v2.1+, which can be re-released
+** under GPLv2+ according to
+** http://www.gnu.org/licenses/gpl-faq.html#AllCompatibility.
+**
+** Unlike RJudy, this implementation only supports JudyL and only for
+** storing C strings as values.  You can't safely store Ruby VALUE's in
+** Judy arrays because Judy can reorganize its data structures on read-only
+** accesses, which can cause segfaults while scanning a Judy array during
+** Ruby garbage collection.
+**
+** --------------------------------------------------------------------------
+** Copyright (C) 2009-2013 The Regents of the University of California.
+** Copyright (c) 2002 by J. Lyle Johnson. All Rights Reserved.
+**
+** This program is free software; you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation; either version 2 of the License, or
+** (at your option) any later version.
+** 
+** This program is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+** GNU General Public License for more details.
+** 
+** You should have received a copy of the GNU General Public License
+** along with this program; if not, write to the Free Software
+** Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+*/
 
 #include <assert.h>
 #include <math.h>
