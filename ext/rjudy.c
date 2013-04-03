@@ -35,6 +35,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 
 #include "ruby.h"
 #include "compat.h"
@@ -53,26 +54,19 @@ typedef struct judyl {
 /*=========================================================================*/
 
 static void
-JudyL_mark(void *p)
-{
-  JudyL *data = (JudyL *)p;
-  PWord_t PValue;
-  Word_t Index = 0;
-
-  JLF(PValue, data->PJLArray, Index);
-  while (PValue) {
-    rb_gc_mark((VALUE)*PValue);
-    JLN(PValue, data->PJLArray, Index);
-  }
-}
-
-
-static void
 JudyL_free(void *p)
 {
   JudyL *data = (JudyL *)p;
+  Word_t Rc_word, i = 0;
+  PWord_t PValue;
+
   if (data) {
-    Word_t Rc_word;
+    JLF(PValue, data->PJLArray, i);
+    while (PValue) {
+      free((void *)*PValue);
+      JLN(PValue, data->PJLArray, i);
+    }
+
     JLFA(Rc_word, data->PJLArray);
     xfree((void *)data);
   }
@@ -84,7 +78,7 @@ JudyL_allocate(VALUE klass)
 {
   JudyL *data = ALLOC(JudyL);
   data->PJLArray = NULL;
-  return Data_Wrap_Struct(klass, JudyL_mark, JudyL_free, data);
+  return Data_Wrap_Struct(klass, 0, JudyL_free, data);
 }
 
 
@@ -97,6 +91,14 @@ JudyL_init(VALUE self)
 
 /*=========================================================================*/
 
+static char *
+dup_strval(VALUE value)
+{
+  StringValue(value);
+  return strdup(RSTRING_PTR(value));
+}
+
+
 static VALUE
 JudyL_setitem(VALUE self, VALUE index, VALUE value)
 {
@@ -107,11 +109,17 @@ JudyL_setitem(VALUE self, VALUE index, VALUE value)
   Data_Get_Struct(self, JudyL, data);
   i = (Word_t)NUM2ULONG(index);
   JLI(PValue, data->PJLArray, i);
-  *PValue = (Word_t)value;
+  *PValue = (Word_t)dup_strval(value);
   return value;
 }
 
 
+/*
+** NOTE: Array#delete_at(i) shifts down all elements after index i, which
+**       is the semantics implemented here.  The original RJudy only freed
+**       the element at index i, which in this implementation is called
+**       #clear_at.
+*/
 static VALUE
 JudyL_delete_at(VALUE self, VALUE index)
 {
@@ -120,12 +128,57 @@ JudyL_delete_at(VALUE self, VALUE index)
   PWord_t PValue;
   int Rc_int;
   VALUE v = Qnil;
+  char *s = NULL;
+
+  Data_Get_Struct(self, JudyL, data);
+
+  i = (Word_t)NUM2ULONG(index);
+  JLG(PValue, data->PJLArray, i);
+  if (PValue) {
+    s = (char *)*PValue;
+    v = rb_str_new2(s); 
+    free(s);
+    JLD(Rc_int, data->PJLArray, i);
+  }
+
+  /* Shift down all occupied elements after index i. */
+  JLN(PValue, data->PJLArray, i);
+  while (PValue) {
+    JLG(PValue, data->PJLArray, i);
+    s = (char *)*PValue;
+    JLD(Rc_int, data->PJLArray, i);
+
+    JLI(PValue, data->PJLArray, i - 1);
+    *PValue = (Word_t)s;
+
+    JLN(PValue, data->PJLArray, i);
+  }
+
+  return v;
+}
+
+
+/*
+** NOTE: Unliked #delete_at, this only frees the element at index i (and
+**       doesn't shift down subsequent elements).
+*/
+static VALUE
+JudyL_clear_at(VALUE self, VALUE index)
+{
+  JudyL *data;
+  Word_t i;
+  PWord_t PValue;
+  int Rc_int;
+  VALUE v = Qnil;
+  char *s = NULL;
 
   Data_Get_Struct(self, JudyL, data);
   i = (Word_t)NUM2ULONG(index);
   JLG(PValue, data->PJLArray, i);
   if (PValue) {
-    v = (VALUE)*PValue;
+    s = (char *)*PValue;
+    v = rb_str_new2(s); 
+    free(s);
     JLD(Rc_int, data->PJLArray, i);
   }
   return v;
@@ -139,17 +192,24 @@ JudyL_getitem(VALUE self, VALUE index)
   Word_t i;
   PWord_t PValue;
   int Rc_int;
-  VALUE v = Qnil;
 
   Data_Get_Struct(self, JudyL, data);
   i = (Word_t)NUM2ULONG(index);
   JLG(PValue, data->PJLArray, i);
-  return (PValue ? (VALUE)*PValue : Qnil);
+  return (PValue ? rb_str_new2((char *)*PValue) : Qnil);
 }
 
 
+/*
+** Returns the number of indices with values between an optional (inclusive)
+** range of indices or over the entire Judy array, if no range is given.
+**
+** NOTE: Lyle's RJudy named this method 'count', but 'count' has a different
+**       well-known meaning in Ruby, so I've renamed this to avoid surprising
+**       the user.
+*/
 static VALUE
-JudyL_count(int argc, VALUE *argv, VALUE self)
+JudyL_count_present(int argc, VALUE *argv, VALUE self)
 {
   JudyL *data;
   VALUE index1, index2;
@@ -175,7 +235,7 @@ JudyL_count(int argc, VALUE *argv, VALUE self)
 
 #if 0
 static VALUE
-JudyL_count(VALUE self, VALUE index1, VALUE index2)
+JudyL_count_present(VALUE self, VALUE index1, VALUE index2)
 {
   JudyL *data;
   Word_t i1, i2;
@@ -198,6 +258,26 @@ JudyL_count(VALUE self, VALUE index1, VALUE index2)
 #endif
 
 
+/*
+** Returns the equivalent length of a Ruby Array that could hold the entirety
+** of this Judy array.  This matches the semantics of Array#length (and #size).
+**
+** NOTE: Lyle's RJudy made this an alias of JudyL_count_present, which has
+**       a different semantics to the well-known meaning of Array#length.
+*/
+static VALUE
+JudyL_length(VALUE self)
+{
+  JudyL *data;
+  Word_t i = -1;
+  PWord_t PValue;
+
+  Data_Get_Struct(self, JudyL, data);
+  JLL(PValue, data->PJLArray, i);
+  return (PValue ? ULONG2NUM(i + 1) : INT2FIX(0));
+}
+
+
 static VALUE
 JudyL_nth_value(VALUE self, VALUE Nth)
 {
@@ -208,7 +288,7 @@ JudyL_nth_value(VALUE self, VALUE Nth)
   Data_Get_Struct(self, JudyL, data);
   n = (Word_t)NUM2ULONG(Nth);
   JLBC(PValue, data->PJLArray, n, i);
-  return (PValue ? (VALUE)*PValue : Qnil);
+  return (PValue ? rb_str_new2((char *)*PValue) : Qnil);
 }
 
 
@@ -223,18 +303,6 @@ JudyL_nth_index(VALUE self, VALUE Nth)
   n = (Word_t)NUM2ULONG(Nth);
   JLBC(PValue, data->PJLArray, n, i);
   return (PValue ? ULONG2NUM(i) : Qnil);
-}
-
-
-static VALUE
-JudyL_free_array(VALUE self)
-{
-  JudyL *data;
-  Word_t Rc_word;
-
-  Data_Get_Struct(self, JudyL, data);
-  JLFA(Rc_word, data->PJLArray);
-  return UINT2NUM(Rc_word);
 }
 
 
@@ -383,7 +451,7 @@ JudyL_first(VALUE self)
 
   Data_Get_Struct(self, JudyL, data);
   JLF(PValue, data->PJLArray, i);
-  return (PValue ? (VALUE)*PValue : Qnil);
+  return (PValue ? rb_str_new2((char *)*PValue) : Qnil);
 }
 
 
@@ -396,7 +464,7 @@ JudyL_last(VALUE self)
 
   Data_Get_Struct(self, JudyL, data);
   JLL(PValue, data->PJLArray, i);
-  return (PValue ? (VALUE)*PValue : Qnil);
+  return (PValue ? rb_str_new2((char *)*PValue) : Qnil);
 }
 
 
@@ -410,7 +478,24 @@ JudyL_each(VALUE self)
   Data_Get_Struct(self, JudyL, data);
   JLF(PValue, data->PJLArray, i);
   while (PValue) {
-    rb_yield((VALUE)*PValue);
+    rb_yield(rb_str_new2((char *)*PValue));
+    JLN(PValue, data->PJLArray, i);
+  }
+  return self;
+}
+
+
+static VALUE
+JudyL_each_with_index(VALUE self)
+{
+  JudyL *data;
+  Word_t i = 0;
+  PWord_t PValue;
+
+  Data_Get_Struct(self, JudyL, data);
+  JLF(PValue, data->PJLArray, i);
+  while (PValue) {
+    rb_yield(rb_ary_new3(2, rb_str_new2((char *)*PValue), ULONG2NUM(i)));
     JLN(PValue, data->PJLArray, i);
   }
   return self;
@@ -455,9 +540,15 @@ static VALUE
 JudyL_clear(VALUE self)
 {
   JudyL *data;
-  Word_t Rc_word;
+  Word_t Rc_word, i = 0;
+  PWord_t PValue;
 
   Data_Get_Struct(self, JudyL, data);
+  JLF(PValue, data->PJLArray, i);
+  while (PValue) {
+    free((void *)*PValue);
+    JLN(PValue, data->PJLArray, i);
+  }
   JLFA(Rc_word, data->PJLArray);
   return self;
 }
@@ -478,14 +569,13 @@ JudyL_includep(VALUE self, VALUE o)
 {
   JudyL *data;
   PWord_t PValue;
-  VALUE value;
   Word_t i = 0;
 
+  StringValue(o);
   Data_Get_Struct(self, JudyL, data);
   JLF(PValue, data->PJLArray, i);
   while (PValue) {
-    value = (VALUE)*PValue;
-    if (rb_equal(value, o) == Qtrue)
+    if (strcmp(RSTRING_PTR(o), (char *)*PValue) == 0)
       return Qtrue;
     JLN(PValue, data->PJLArray, i);
   }
@@ -505,23 +595,30 @@ JudyL_fullp(VALUE self)
 }
 
 
+/*
+** Returns a Ruby array with the same contents (with non-nil values at the
+** same indices) as this Judy array.
+*/
 static VALUE
 JudyL_to_a(VALUE self)
 {
   JudyL *data;
   VALUE ary;
   PWord_t PValue;
-  Word_t i, last_i = -1;
+  Word_t i = 0, last_i = -1;
 
   Data_Get_Struct(self, JudyL, data);
-
-  ary = rb_ary_new();
   JLL(PValue, data->PJLArray, last_i);
   if (PValue) {
-    for (i = 0; i <= last_i; i++) {
-      JLG(PValue, data->PJLArray, i);
-      rb_ary_push(ary, (PValue ? (VALUE)*PValue : Qnil));
+    ary = rb_ary_new2((long)last_i + 1);
+    JLF(PValue, data->PJLArray, i);
+    while (PValue) {
+      rb_ary_store(ary, (long)i, rb_str_new2((char *)*PValue));
+      JLN(PValue, data->PJLArray, i);
     }
+  }
+  else {
+    ary = rb_ary_new();
   }
   return ary;
 }
@@ -543,11 +640,7 @@ Init_judy(void)
 {
   ID private_class_method_ID, private_ID;
   ID dup_ID, clone_ID, pow;
-  int i;
     
-  /* XXX make this a compile time error */
-  assert(sizeof(Word_t) >= sizeof(VALUE));
-
   pow = rb_intern("**");
   max_count = rb_funcall(INT2FIX(2), pow, 1, INT2FIX(8 * sizeof(Word_t)));
 
@@ -563,13 +656,13 @@ Init_judy(void)
   rb_define_method(cJudyL, "initialize", JudyL_init, 0);
   rb_define_method(cJudyL, "[]=", JudyL_setitem, 2);
   rb_define_method(cJudyL, "delete_at", JudyL_delete_at, 1);
+  rb_define_method(cJudyL, "clear_at", JudyL_clear_at, 1);
   rb_define_method(cJudyL, "[]", JudyL_getitem, 1);
-  rb_define_method(cJudyL, "count", JudyL_count, -1);
-  rb_define_alias(cJudyL, "size", "count");
-  rb_define_alias(cJudyL, "length", "count");
+  rb_define_method(cJudyL, "count_present", JudyL_count_present, -1);
+  rb_define_method(cJudyL, "length", JudyL_length, 0);
+  rb_define_alias(cJudyL, "size", "length");
   rb_define_method(cJudyL, "nth_value", JudyL_nth_value, 1);
   rb_define_method(cJudyL, "nth_index", JudyL_nth_index, 1);
-  rb_define_method(cJudyL, "free_array", JudyL_free_array, 0);
   rb_define_method(cJudyL, "mem_used", JudyL_mem_used, 0);
   rb_define_method(cJudyL, "first_index", JudyL_first_index, -1);
   rb_define_method(cJudyL, "next_index", JudyL_next_index, 1);
@@ -582,6 +675,7 @@ Init_judy(void)
   rb_define_method(cJudyL, "first", JudyL_first, 0);
   rb_define_method(cJudyL, "last", JudyL_last, 0);
   rb_define_method(cJudyL, "each", JudyL_each, 0);
+  rb_define_method(cJudyL, "each_with_index", JudyL_each_with_index, 0);
   rb_define_method(cJudyL, "each_index", JudyL_each_index, 0);
   rb_define_method(cJudyL, "each_empty_index", JudyL_each_empty_index, 0);
   rb_define_method(cJudyL, "clear", JudyL_clear, 0);
