@@ -1,5 +1,5 @@
 #############################################################################
-## Holds the tuples of tuple space regions.
+## Holds the tuples of tuple space regions using a Judy array.
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
@@ -22,7 +22,6 @@
 #############################################################################
 
 require 'mioext'
-require 'marinda/list'
 
 module Marinda
 
@@ -32,7 +31,7 @@ module Marinda
 #       argument is actually a Channel.  In a global tuple space, the
 #       'channel' argument is a GlobalSpace::Context.
 
-class TupleBag
+class JudyTupleBag
 
   attr_reader :seqnum
 
@@ -45,7 +44,7 @@ class TupleBag
     # never be assigned to a tuple, and hence serves to indicate a seqnum
     # that is lower than all possible seqnums.
     @seqnum = 0
-    @tuples = List.new
+    @tuples = Judy::JudyL.new
   end
 
   public #===================================================================
@@ -65,7 +64,8 @@ class TupleBag
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, port) do |row|
-      @tuples.push Tuple.from_mio(row[0])
+      tuple = Tuple.from_mio row[0]
+      @tuples[tuple.seqnum] = tuple
     end
   end
 
@@ -77,32 +77,42 @@ class TupleBag
 
   # The caller must have called prepare_write(tuple) prior to commit_write.
   def commit_write(tuple)
-    @tuples << tuple
+    @tuples[@seqnum] = tuple
   end
 
   def readp(template)
-    @tuples.find { |tuple| template.match tuple }
+    @tuples.each do |tuple|
+      return tuple if template.match tuple
+    end
+    nil
   end
 
   def readp_next(template, cursor)
-    @tuples.find { |tuple| tuple.seqnum > cursor and template.match tuple }
+    loop do
+      cursor = @tuples.next_index cursor
+      return nil unless cursor
+
+      tuple = @tuples[cursor]
+      return tuple if template.match tuple
+    end
   end
 
   def takep(template)
-    node = @tuples.find_node { |tuple| template.match tuple }
-    return nil unless node
-
-    @tuples.delete_node node
-    node.value
+    @tuples.each_index do |i|
+      tuple = @tuples[i]
+      return @tuples.delete_at i if template.match tuple
+    end
+    nil
   end
 
   def takep_next(template, cursor)
-    node = @tuples.find_node { |tuple| tuple.seqnum > cursor and
-                                       template.match tuple }
-    return nil unless node
+    loop do
+      cursor = @tuples.next_index cursor
+      return nil unless cursor
 
-    @tuples.delete_node node
-    node.value
+      tuple = @tuples[cursor]
+      return @tuples.delete_at cursor if template.match tuple
+    end
   end
 
   def monitor_stream_existing(template, channel)
@@ -114,12 +124,15 @@ class TupleBag
   end
 
   def consume_stream_existing(template, channel)
-    @tuples.delete_if do |tuple|
+    cursor = 0
+    loop do
+      cursor = @tuples.next_index cursor
+      return unless cursor
+
+      tuple = @tuples[cursor]
       if template.match tuple
+        @tuples.delete_at cursor
         @worker.region_result @port, channel, :consume_stream, template, tuple
-        true  # yes, delete node
-      else
-        false
       end
     end
   end
@@ -132,13 +145,14 @@ class TupleBag
   end
 
   def shutdown
+    @tuples.free_array()
     @tuples = nil
     self
   end
 
   def inspect
-    sprintf("\#<Marinda::TupleBag:%#x @seqnum=%d, @tuples=(%d)%#x>",
-	    object_id, @seqnum, @tuples.length, @tuples.object_id)
+    sprintf("\#<Marinda::JudyTupleBag:%#x @seqnum=%d, @tuples=(%d)%#x>",
+	    object_id, @seqnum, @tuples.count, @tuples.object_id)
   end
 
 end
