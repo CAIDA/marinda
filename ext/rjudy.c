@@ -109,6 +109,9 @@ JudyL_setitem(VALUE self, VALUE index, VALUE value)
   Data_Get_Struct(self, JudyL, data);
   i = (Word_t)NUM2ULONG(index);
   JLI(PValue, data->PJLArray, i);
+  if (PValue) {
+    free((void *)*PValue);
+  }
   *PValue = (Word_t)dup_strval(value);
   return value;
 }
