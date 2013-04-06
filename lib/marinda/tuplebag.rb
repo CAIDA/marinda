@@ -31,7 +31,7 @@ module Marinda
 #       argument is actually a Channel.  In a global tuple space, the
 #       'channel' argument is a GlobalSpace::Context.
 
-class JudyTupleBag
+class TupleBag
 
   attr_reader :seqnum
 
@@ -47,12 +47,48 @@ class JudyTupleBag
     @tuples = Judy::JudyL.new
   end
 
+
+  def find_match(template_mio)
+    template = MIO.decode template_mio
+
+    @tuples.each_with_index do |tuple_mio, index|
+      tuple = MIO.decode tuple_mio
+      return tuple, index if match template, tuple
+    end
+  end
+
+
+  def find_next_match(template_mio, cursor)
+    template = MIO.decode template_mio
+
+    loop do
+      cursor = @tuples.next_index cursor
+      return nil unless cursor
+
+      tuple = MIO.decode @tuples[cursor]
+      return tuple, cursor if match template, tuple
+    end
+  end
+
+
+  def match(template, tuple)
+    return true if template.length == 0
+    return false unless template.length == tuple.length
+    
+    template.each_with_index do |lhs, i|
+      rhs = tuple[i]
+      return false unless lhs == nil || lhs === rhs || rhs == nil
+    end
+    true
+  end
+
+
   public #===================================================================
 
   def checkpoint_state(txn, checkpoint_id, port)
     txn.prepare("INSERT INTO RegionTuples VALUES(?, ?, ?, ?)") do |insert_stmt|
-      @tuples.each do |tuple|
-        insert_stmt.execute checkpoint_id, port, tuple.seqnum, tuple.to_mio
+      @tuples.each_with_index do |tuple, seqnum|
+        insert_stmt.execute checkpoint_id, port, seqnum, tuple
       end
     end
   end
@@ -60,59 +96,48 @@ class JudyTupleBag
 
   def restore_state(state, checkpoint_id, tuple_seqnum, port)
     @seqnum = tuple_seqnum
-    state.db.execute("SELECT tuple FROM RegionTuples
+    state.db.execute("SELECT seqnum,tuple FROM RegionTuples
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, port) do |row|
-      tuple = Tuple.from_mio row[0]
-      @tuples[tuple.seqnum] = tuple
+      seqnum, tuple = row
+      @tuples[seqnum] = tuple
     end
   end
 
 
+  # XXX fix
   def prepare_write(tuple)
     @seqnum += 1
     tuple.seqnum = @seqnum
   end
 
+  # XXX fix
   # The caller must have called prepare_write(tuple) prior to commit_write.
   def commit_write(tuple)
     @tuples[@seqnum] = tuple
   end
 
   def readp(template)
-    @tuples.each do |tuple|
-      return tuple if template.match tuple
-    end
-    nil
+    tuple, _ = find_match template
+    return tuple  # == nil if not found
   end
 
   def readp_next(template, cursor)
-    loop do
-      cursor = @tuples.next_index cursor
-      return nil unless cursor
-
-      tuple = @tuples[cursor]
-      return tuple if template.match tuple
-    end
+    tuple, _ = find_next_match template, cursor
+    return tuple  # == nil if not found
   end
 
   def takep(template)
-    @tuples.each_index do |i|
-      tuple = @tuples[i]
-      return @tuples.delete_at i if template.match tuple
-    end
-    nil
+    tuple, index = find_match template
+    @tuples.clear_at index if tuple
+    return tuple
   end
 
   def takep_next(template, cursor)
-    loop do
-      cursor = @tuples.next_index cursor
-      return nil unless cursor
-
-      tuple = @tuples[cursor]
-      return @tuples.delete_at cursor if template.match tuple
-    end
+    tuple, index = find_next_match template, cursor
+    @tuples.clear_at index if tuple
+    return tuple
   end
 
   def monitor_stream_existing(template, channel)
@@ -140,12 +165,12 @@ class JudyTupleBag
   def dump(resource="all")
     if resource == "all" || resource == "tuples"
       $stderr.puts "tuples ----------------------------------------------------"
-      @tuples.each { |tuple| $stderr.puts tuple.to_s }
+      @tuples.each { |tuple| $stderr.puts tuple }
     end
   end
 
   def shutdown
-    @tuples.free_array()
+    @tuples.clear
     @tuples = nil
     self
   end
