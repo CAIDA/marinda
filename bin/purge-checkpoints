@@ -25,7 +25,7 @@ require 'rubygems'
 require 'ostruct'
 require 'optparse'
 
-require 'sqlite3'
+require 'amalgalite'
 
 $options = OpenStruct.new
 $options.root_dir = "."
@@ -86,13 +86,13 @@ def open_state_database(path, &block)
     exit 1
   end
 
-  retval = SQLite3::Database.new path
+  retval = Amalgalite::Database.new path
   unless retval
     $stderr.printf "ERROR: couldn't open state database file '%s'\n", path
     exit 1
   end
 
-  retval.type_translation = true
+#  retval.type_translation = true
 
   if block
     begin
@@ -140,9 +140,9 @@ open_state_database($options.state_db) do |db|
       end
     else
       checkpoint_id, timestamp =
-        txn.get_first_row "SELECT id,timestamp FROM ChangeLog
-                           WHERE id IN (SELECT max(id) FROM ChangeLog
-                                        WHERE operation='checkpoint');"
+        txn.first_row_from "SELECT id,timestamp FROM ChangeLog
+                            WHERE id IN (SELECT max(id) FROM ChangeLog
+                                         WHERE operation='checkpoint');"
       if checkpoint_id
         printf "Purging all checkpoints before id %d taken %s ...\n",
           checkpoint_id, Time.at(timestamp).to_s
@@ -159,7 +159,7 @@ open_state_database($options.state_db) do |db|
           unless $options.test_only
             txn.execute "DELETE FROM #{table} WHERE checkpoint_id < ? ",
               checkpoint_id
-            printf "Deleted %d record(s) from %s.\n", txn.changes, table
+            printf "Deleted %d record(s) from %s.\n", txn.row_changes, table
           end
         end
       else

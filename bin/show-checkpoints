@@ -25,7 +25,7 @@ require 'rubygems'
 require 'ostruct'
 require 'optparse'
 
-require 'sqlite3'
+require 'amalgalite'
 
 $options = OpenStruct.new
 $options.root_dir = "."
@@ -91,13 +91,13 @@ def open_state_database(path, &block)
     exit 1
   end
 
-  retval = SQLite3::Database.new path
+  retval = Amalgalite::Database.new path
   unless retval
     $stderr.printf "ERROR: couldn't open state database file '%s'\n", path
     exit 1
   end
 
-  retval.type_translation = true
+#  retval.type_translation = true
 
   if block
     begin
@@ -112,9 +112,9 @@ end
 
 
 def show_checkpoint(db, checkpoint_id)
-  timestamp = db.get_first_value "SELECT timestamp FROM ChangeLog
-                                  WHERE id=?
-                                  AND operation='checkpoint'", checkpoint_id
+  timestamp = db.first_value_from "SELECT timestamp FROM ChangeLog
+                                   WHERE id=?
+                                   AND operation='checkpoint'", checkpoint_id
   unless timestamp
     printf "ERROR: There is no checkpoint with id %d.\n", checkpoint_id
     exit 1
@@ -126,6 +126,7 @@ def show_checkpoint(db, checkpoint_id)
   puts "#" * 70
   puts
 
+  tables = db.schema.tables
   %w{ Regions RegionTuples RegionTemplates Connections UnackedMessages
       OngoingRequests }.each do |table|
     puts
@@ -136,15 +137,14 @@ def show_checkpoint(db, checkpoint_id)
     db.execute("SELECT * FROM #{table} WHERE checkpoint_id=? ",
                checkpoint_id) do |row|
       puts
-      p row if $options.verbose      
-      row.each_with_index do |value, index|
-        next if row.fields[index] == "checkpoint_id"
-        print row.fields[index] + ": "
-        if row.types[index] == "TEXT"
-          indent = " " * (row.fields[index].length + 2)
-          puts value.gsub(/\n/, "\n" + indent)
+      tables[table].columns.each do |name, column|
+        next if name == "checkpoint_id"
+        printf "%s: ", name
+        if column.declared_data_type == "TEXT"
+          indent = " " * (name.length + 2)
+          puts row[name].gsub(/\n/, "\n" + indent)
         else
-          puts value.to_s
+          puts row[name].to_s
         end
       end
     end
@@ -175,8 +175,8 @@ open_state_database($options.state_db) do |db|
   elsif $options.checkpoint_id
     show_checkpoint db, $options.checkpoint_id
   else
-    checkpoint_id = db.get_first_value "SELECT max(id) FROM ChangeLog
-                                        WHERE operation='checkpoint'"
+    checkpoint_id = db.first_value_from "SELECT max(id) FROM ChangeLog
+                                         WHERE operation='checkpoint'"
     if checkpoint_id
       show_checkpoint db, checkpoint_id
     else
