@@ -965,9 +965,13 @@ class ClientEventLoop
 
       @sources.each_key do |source|
         if source.io
-          if source.want_read || source.want_write
-            @read_set << source.io if source.want_read
-            @write_set << source.io if source.want_write
+          if source.want_read
+            @read_set << source.io
+            @active_sources[source.io] = source
+          end
+
+          if source.want_write
+            @write_set << source.io 
             @active_sources[source.io] = source
           end
         else
