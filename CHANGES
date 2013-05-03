@@ -1,3 +1,8 @@
+version 0.13.7, 2013-05-02
+  * added ClientEventLoop#set_deadline, a low-level mechanism for timing
+    out the underlying select() call of the event loop provided by
+    ClientEventLoop; this is useful for implementing a timer
+
 version 0.13.6, 2012-06-22
   * fixed bug in 'consume' operation ('consume_stream' not affected):
     a race condition could cause tuples to be lost

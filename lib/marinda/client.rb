@@ -926,6 +926,9 @@ class ClientEventLoop
     @sources = {}  # source => true
     @active_sources = {}  # fd => source
 
+    @deadline = nil  # timestamp
+    @deadline_callback = nil
+
     # IO sets to pass to Kernel::select, and IO sets returned by
     # select.  We use instance variables so that it is easier to inspect
     # a core dump with gdb.
@@ -951,6 +954,13 @@ class ClientEventLoop
 
   def remove_source(source)
     @sources.delete source
+  end
+
+
+  def set_deadline(delay, &block)
+    raise "missing block" unless block
+    @deadline = Time.now.to_f + delay.to_f
+    @deadline_callback = block
   end
 
 
@@ -984,26 +994,55 @@ class ClientEventLoop
       end
 
       if @@debug
-        $stdout.printf "Client: waiting for I/O ...\n"
-        $stdout.printf "select read_set (%d fds): %p\n",
+        $stdout.printf "\nClientEventLoop: waiting for I/O ...\n"
+        $stdout.printf "  select read_set (%d fds): %p\n",
           @read_set.length, @read_set
-        $stdout.printf "select write_set (%d fds): %p\n",
+        $stdout.printf "  select write_set (%d fds): %p\n",
           @write_set.length,@write_set
+        if @deadline
+          $stdout.printf "  deadline at %p (%s)\n", @deadline,
+            Time.at(@deadline)
+        else
+          $stdout.printf "  no deadline.\n"
+        end
       end
 
-      if @read_set.empty? && @write_set.empty?
+      if !@deadline && @read_set.empty? && @write_set.empty?
         @running = false
         break 
+      end
+
+      timeout = nil
+      if @deadline
+        timeout = @deadline - Time.now.to_f
+        timeout = 0 if timeout <= 0.0
+        # Note: Don't execute the timeout callback here, before the select,
+        #       since we want the next select() call to take into account
+        #       any changes to the deadline made by the callback, and the
+        #       simplest way to ensure this is to execute the callback after
+        #       the select().
       end
 
       # XXX select can throw "closed stream (IOError)" if a write file
       #     descriptor has been closed previously; we may want to catch
       #     this exception and remove the closed descriptor.  Strictly
       #     speaking, users shouldn't be passing in closed file descriptors.
-      @readable, @writable = select @read_set, @write_set
+      @readable, @writable = select @read_set, @write_set, [], timeout
       if @@debug
         $stdout.printf "select returned %d readable, %d writable\n",
           (@readable ? @readable.length : 0), (@writable ? @writable.length : 0)
+      end
+
+      # Note: Execute the callback here before processing the ready
+      #       descriptors so that @deadline and @deadline_callback don't
+      #       get clobbered in subtle ways by read_data()/write_data()
+      #       and the deadline callback.  It's more predictable for the
+      #       deadline callback to execute first, since the @deadline...
+      #       variables currently hold the state of the expired deadline.
+      if timeout == 0 || (timeout && !@readable && !@writable)
+        callback = @deadline_callback
+        @deadline = @deadline_callback = nil
+        callback.call()
       end
 
       if @readable
