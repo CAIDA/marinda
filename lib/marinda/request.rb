@@ -4,8 +4,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007,2008,2009,2010 The Regents of the University of
-## California.
+## Copyright (C) 2007-2013 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -27,7 +26,7 @@ module Marinda
 
 class RegionRequest
 
-  attr_reader :worker, :port, :operation, :template, :channel
+  attr_reader :worker, :port, :reqnum, :operation, :template, :channel
 
   # In GlobalSpaceMux, the initialization arguments are
   #
@@ -44,9 +43,10 @@ class RegionRequest
   # and it is then the {worker}'s job to notify the {channel}.
   #
   # In all situations, {operation} should be a symbol like :read, :take, etc.
-  def initialize(worker, port, operation, template, channel)
+  def initialize(worker, port, reqnum, operation, template, channel)
     @worker = worker
     @port = port
+    @reqnum = reqnum
     @operation = operation
     @template = template
     @channel = channel
@@ -55,9 +55,9 @@ class RegionRequest
   public # ================================================================
 
   def inspect
-    sprintf "\#<RegionRequest:%#x @worker=%#x @port=%#x @operation=%p, " +
-      "@template=%p, @channel=%#x>", object_id, @worker.object_id, @port,
-      @operation, @template, @channel.object_id
+    sprintf "\#<RegionRequest:%#x @worker=%#x @port=%#x @reqnum=%p " +
+      "@operation=%p @template=%p, @channel=%#x>", object_id,@worker.object_id,
+      @port, @reqnum, @operation, @template, @channel.object_id
   end
 
 end

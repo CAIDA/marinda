@@ -405,30 +405,31 @@ class LocalSpace
   end
 
   # operation == :read, :readp, :take, :takep
-  def region_singleton_operation(operation, port, template, channel)
+  def region_singleton_operation(port, reqnum, operation, template, channel)
     if Port.global? port
-      request = RegionRequest.new self, port, operation, template, channel
+      request = RegionRequest.new self, port, reqnum, operation,template,channel
       @mux.__send__ operation, port, request
       request
     else
-      find_region(port).__send__ operation, template, channel
+      find_region(port).__send__ operation, reqnum, template, channel
     end
   end
 
   # operation == :read_all, :take_all, :monitor, :consume
-  def region_iteration_operation(operation, port, template, channel, cursor=0)
+  def region_iteration_operation(port, reqnum, operation, template,
+                                 channel, cursor=0)
     if Port.global? port
-      request = RegionRequest.new self, port, operation, template, channel
+      request = RegionRequest.new self, port, reqnum, operation,template,channel
       @mux.__send__ operation, port, request, cursor
       request
     else
-      find_region(port).__send__ operation, template, channel, cursor
+      find_region(port).__send__ operation, reqnum, template, channel, cursor
     end
   end
 
   # operation == :monitor_stream_setup, :consume_stream_setup,
   #              :monitor_stream_start, :consume_stream_start
-  def region_stream_operation(operation, port, template, channel)
+  def region_stream_operation(port, reqnum, operation, template, channel)
     if Port.global? port
       # The global server performs the setup and start procedures itself,
       # so we only need to trigger the operation as a whole.
@@ -440,11 +441,11 @@ class LocalSpace
         fail "INTERNAL ERROR: unhandled stream operation %p", operation
       end
 
-      request = RegionRequest.new self, port, operation, template, channel
+      request = RegionRequest.new self, port, reqnum, operation,template,channel
       @mux.__send__ operation, port, request
       request
     else
-      find_region(port).__send__ operation, template, channel
+      find_region(port).__send__ operation, reqnum, template, channel
     end
   end
 
@@ -475,10 +476,10 @@ class LocalSpace
 
   # Events from GlobalSpaceMux --------------------------------------------
 
-  def mux_result(port, request, result)
+  def mux_result(port, request, result, seqnum)
     if request.channel.connected
-      request.channel.region_result port, request.operation,
-        request.template, result
+      request.channel.region_result port, request.reqnum, request.operation,
+        request.template, result, seqnum
     # else XXX possibly return taken tuple into region
     end
   end
@@ -495,9 +496,9 @@ class LocalSpace
 
   # Note: We could simply use forward_message, but inlining
   #       channel.region_result call might be faster.
-  def region_result(port, channel, operation, template, tuple)
+  def region_result(port, channel, reqnum, operation, template, tuple, seqnum)
     if channel.connected
-      channel.region_result port, operation, template, tuple
+      channel.region_result port, reqnum, operation, template, tuple, seqnum
     else
       $log.info "LocalSpace#region_result: discarding message to " +
         "dead channel %#x\n", channel.object_id

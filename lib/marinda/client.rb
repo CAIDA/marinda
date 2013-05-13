@@ -243,7 +243,7 @@ class Client
 
     case code
     when ACK_RESP
-      return payload.unpack("C")   # command
+      return [ code ]
 
     when TUPLE_RESP
       tuple = MIO.decode payload[1 ... payload.length]

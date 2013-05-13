@@ -39,7 +39,6 @@ require 'mioext'
 require 'marinda/msgcodes'
 require 'marinda/flagsets'
 require 'marinda/port'
-require 'marinda/tuple'
 require 'marinda/version'
 
 module Marinda
@@ -216,7 +215,7 @@ class Channel
   end
 
 
-  def handle_singleton_result(reqnum, command, request, tuple)
+  def handle_singleton_result(reqnum, command, request, tuple, seqnum)
     if request
       @active_command = [command, request]
     else
@@ -226,7 +225,7 @@ class Channel
   end
 
 
-  def handle_iteration_result(reqnum, command, template, request, tuple)
+  def handle_iteration_result(reqnum, command, template, request, tuple, seqnum)
     if request
       $log.debug "Channel#handle_iteration_result: request=%p",
         request if $debug_client_commands
@@ -235,7 +234,7 @@ class Channel
       # For stream commands, just leave the request in @active_command so
       # that we properly reject NEXT_CMD in handle_client_message.
       unless command == MONITOR_STREAM_CMD || command == CONSUME_STREAM_CMD
-        @active_command = [command, IterationState[template, tuple.seqnum, nil]]
+        @active_command = [command, IterationState[template, seqnum, nil]]
       end
       send_tuple reqnum, tuple
     else
@@ -297,9 +296,9 @@ class Channel
     end
     check_access_privilege command
 
-    request, tuple = @space.region_singleton_operation REGION_METHOD[command],
-      @port, template, self
-    handle_singleton_result reqnum, command, request, tuple
+    request, tuple, seqnum = @space.region_singleton_operation @port, reqnum,
+      REGION_METHOD[command], template, self
+    handle_singleton_result reqnum, command, request, tuple, seqnum
   end
 
 
@@ -310,9 +309,9 @@ class Channel
     end
     check_access_privilege command
 
-    request, tuple = @space.region_iteration_operation REGION_METHOD[command],
-      @port, template, self
-    handle_iteration_result reqnum, command, template, request, tuple
+    request, tuple, seqnum = @space.region_iteration_operation @port, reqnum,
+      REGION_METHOD[command], template, self
+    handle_iteration_result reqnum, command, template, request, tuple, seqnum
   end
 
 
@@ -324,9 +323,9 @@ class Channel
     check_access_privilege command
 
     # First, set up the request in @active_command.
-    request, tuple = @space.region_stream_operation REGION_METHOD[command],
-      @port, template, self
-    handle_iteration_result reqnum, command, template, request, tuple
+    request, tuple, seqnum = @space.region_stream_operation @port, reqnum,
+      REGION_METHOD[command], template, self
+    handle_iteration_result reqnum, command, template, request, tuple, seqnum
 
     # Stream over all existing matching tuples.
     #
@@ -338,8 +337,8 @@ class Channel
     #       will automatically take care of starting up the streaming.
     #       LocalSpace takes care of making this a no-op so that the code
     #       can stay simple here.
-    @space.region_stream_operation REGION_STREAM_START_METHOD[command],
-      port, template, self
+    @space.region_stream_operation @port, reqnum,
+      REGION_STREAM_START_METHOD[command], template, self
   end
 
 
@@ -348,9 +347,11 @@ class Channel
     $log.debug "client next_value(%d)", reqnum if $debug_client_commands
     command, state = @active_command
     $log.debug "client next_value: state=%p", state if $debug_client_commands
-    request, tuple = @space.region_iteration_operation REGION_METHOD[command],
-      @port, state.template, self, state.cursor
-    handle_iteration_result reqnum, command, state.template, request, tuple
+    request, tuple, seqnum = @space.region_iteration_operation @port, reqnum,
+      REGION_METHOD[command], state.template, self, state.cursor
+
+    handle_iteration_result reqnum, command, state.template,
+      request, tuple, seqnum
   end
 
 
@@ -371,15 +372,13 @@ class Channel
 
     when WRITE_CMD
       values_mio = payload[1 ... payload.length]
-      return [ code, Tuple.new(values_mio) ]
+      return [ code, values_mio ]
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD,
 	READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD,
         MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       values_mio = payload[1 ... payload.length]
-      template = Template.new values_mio
-      template.reqnum = reqnum
-      return [ code, template ]
+      return [ code, values_mio ]
 
     when NEXT_CMD, CANCEL_CMD
       return [ code ]
@@ -397,11 +396,10 @@ class Channel
   end
 
 
-  # {tuple} should be instance of Tuple or nil
+  # {tuple} should be a MIO value or nil
   def send_tuple(reqnum, tuple)
-    case
-    when tuple
-      send reqnum, "Ca*", TUPLE_RESP, tuple.values_mio
+    if tuple
+      send reqnum, "Ca*", TUPLE_RESP, tuple
     else
       send reqnum, "C", TUPLE_NIL_RESP
     end
@@ -591,10 +589,10 @@ class Channel
 
   # Events from Region ----------------------------------------------------
 
-  def region_result(port, operation, template, tuple)
+  def region_result(port, reqnum, operation, template, tuple, seqnum)
     $log.debug "Channel#region_result(%p, %p)",
       operation, tuple if $debug_client_commands
-    send_tuple template.reqnum, tuple
+    send_tuple reqnum, tuple
 
     # Don't update @active_command for stream commands.  Instead, just
     # leave the request in @active_command so that we properly reject
@@ -612,7 +610,7 @@ class Channel
     if tuple
       case operation
       when :read_all, :take_all, :monitor, :consume, :next
-	state = IterationState[template, tuple.seqnum, nil]
+	state = IterationState[template, seqnum, nil]
 	@active_command = [OPERATION_TO_COMMAND[operation], state]
       end
     end

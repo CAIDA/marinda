@@ -46,7 +46,6 @@ require 'mioext'
 require 'marinda/list'
 require 'marinda/msgcodes'
 require 'marinda/port'
-require 'marinda/tuple'
 require 'marinda/region'
 require 'marinda/globalstate'
 require 'marinda/version'
@@ -329,9 +328,8 @@ class GlobalSpace
       txn.prepare("INSERT INTO OngoingRequests VALUES(?, ?, ?, ?, ?)") do
         |insert_stmt|
         @ongoing_requests.each do |command_seqnum, request|
-          template_mio = request.template.to_mio
           insert_stmt.execute checkpoint_id, @session_id, command_seqnum,
-            request.operation, template_mio
+            request.operation, request.template
         end
       end
     end
@@ -356,27 +354,6 @@ class GlobalSpace
     end
 
   end
-
-  # Old definition modified for use during migration.
-
-#   Message = Struct.new :seqnum, :command, :contents
-#   class Message
-#     def to_yaml_properties
-#       %w{ @seqnum @command @contents }
-#     end
-
-#     def mio_encode
-#       MIO.encode [ seqnum(), command(), contents() ]
-#     end
-
-#     def mio_decode(s)
-#       v = MIO.decode s
-#       self.seqnum = v[0]
-#       self.command = v[1]
-#       self.contents = v[2]
-#       self
-#     end
-#   end
 
   ReadBuffer = Struct.new :length, :payload
 
@@ -471,15 +448,9 @@ class GlobalSpace
                                checkpoint_id) do |row|
         port, tuple_seqnum, node_id, session_id = row[1..-1]
 
-        # The commons region already exists.  All others must be created here.
-        region = (@regions[port] ||= Region.new(self, port))
-        if Port.private?(port)
-          region.node_id = node_id
-          region.session_id = session_id
-        end
-
         # The block passed to {region.restore_state} ties together the
-        # RegionRequest objects restored in TemplateBag to the GlobalSpace.
+        # RegionRequest objects restored in Region to the GlobalSpace.
+        region = (@regions[port] ||= Region.new(self, port))
         region.restore_state(@global_state, checkpoint_id,
                              tuple_seqnum, sessions) do |session_id, request|
           context = sessions[session_id]
@@ -487,10 +458,10 @@ class GlobalSpace
             $log.err "GlobalSpace#restore_state: no Context found for " +
               "session_id=%#x while restoring ongoing_requests " +
               "(checkpoint_id=%d, reqnum=%d, template=%p)", session_id,
-              checkpoint_id, request.template.reqnum, request.template
+              checkpoint_id, request.reqnum, request.template
             exit 1
           end
-          context.ongoing_requests[request.template.reqnum] = request
+          context.ongoing_requests[request.reqnum] = request
         end
       end
 
@@ -846,30 +817,25 @@ class GlobalSpace
   def decode_command(reqnum, command, payload)
     case command
     when WRITE_CMD
-      flags, recipient, values_mio = payload.unpack("Nwa*") 
-
-      tuple = Tuple.new values_mio
-      tuple.flags = flags
-      return [recipient, tuple]
+      port, tuple = payload.unpack("wa*") 
+      return [port, tuple]
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD, READ_ALL_CMD, TAKE_ALL_CMD,
       MONITOR_CMD, CONSUME_CMD, MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       if command == READ_ALL_CMD || command == TAKE_ALL_CMD ||
           command == MONITOR_CMD || command == CONSUME_CMD
-	recipient, cursor, values_mio = payload.unpack("wwa*")
+	port, cursor, template = payload.unpack("wwa*")
       else
-	recipient, values_mio = payload.unpack("wa*")
+	port, template = payload.unpack("wa*")
 	cursor = nil
       end
 
-      template = Template.new values_mio
-      template.reqnum = reqnum
-      retval = [recipient, template]
+      retval = [port, template]
       retval << cursor if cursor
       return retval
 
     when CANCEL_CMD
-      return payload.unpack("ww")  # recipient, request.mux_seqnum
+      return payload.unpack("ww")  # port, request.mux_seqnum
 
     when ACK_CMD, FIN_CMD
       # nothing further to extract
@@ -1126,10 +1092,9 @@ class GlobalSpace
   def enq_tuple(context, command_seqnum, tuple)
     if tuple
       response = TUPLE_RESP
-      flags = tuple.flags
       seqnum = tuple.seqnum
-      contents = [ response, command_seqnum, flags, seqnum, tuple.values_mio ]
-        .pack("CwNwa*")
+      contents = [ response, command_seqnum, seqnum, tuple ]
+        .pack("Cwwa*")
     else
       response = TUPLE_NIL_RESP
       contents = [ response, command_seqnum ].pack("Cw")
@@ -1216,17 +1181,17 @@ class GlobalSpace
 
   # Events from Region ------------------------------------------------------
 
-  def region_result(port, context, operation, template, tuple)
+  def region_result(port, context, reqnum, operation, template, tuple)
     $log.debug "region_result(%p, reqnum=%d) = %p",
-      operation, template.reqnum, tuple if $debug_commands
-    request = context.ongoing_requests[template.reqnum]
+      operation, reqnum, tuple if $debug_commands
+    request = context.ongoing_requests[reqnum]
     if request  # if operation not cancelled
       # Always purge ongoing_requests for non-stream operations.  Each
       # iteration operation must re-instate the request on each iteration.
       unless operation == :monitor_stream || operation == :consume_stream
-        context.ongoing_requests.delete template.reqnum
+        context.ongoing_requests.delete reqnum
       end
-      enq_tuple context, request.template.reqnum, tuple
+      enq_tuple context, request.reqnum, tuple
     end
   end
 

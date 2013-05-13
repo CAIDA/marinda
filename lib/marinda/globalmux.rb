@@ -32,7 +32,6 @@ require 'socket'
 require 'mioext'
 require 'marinda/list'
 require 'marinda/msgcodes'
-require 'marinda/tuple'
 require 'marinda/version'
 
 module Marinda
@@ -201,12 +200,8 @@ class GlobalSpaceMux
       return payload.unpack("w")  # command_seqnum
 
     when TUPLE_RESP
-      command_seqnum, flags, seqnum, values_mio = payload.unpack("wNwa*")
-
-      tuple = Tuple.new values_mio
-      tuple.flags = flags
-      tuple.seqnum = seqnum
-      return [command_seqnum, tuple]
+      command_seqnum, seqnum, values_mio = payload.unpack("wwa*")
+      return [command_seqnum, values_mio]
 
     when TUPLE_NIL_RESP
       retval = payload.unpack("w")  # command_seqnum
@@ -373,30 +368,28 @@ class GlobalSpaceMux
 
   #--------------------------------------------------------------------------
 
-  def enq_write(recipient, tuple)
+  def enq_write(port, tuple)
     command = WRITE_CMD
-    flags = tuple.flags
-    contents = [ command, flags, recipient, tuple.values_mio ].pack("CNwa*")
+    contents = [ command, port, tuple ].pack("Cwa*")
     enq_message command, contents
   end
 
 
-  def enq_command(command, recipient, request, cursor=nil)
-    values_mio = request.template.values_mio
+  def enq_command(command, port, request, cursor=nil)
     if cursor
-      contents = [command, recipient, cursor, values_mio].pack("Cwwa*")
+      contents = [ command, port, cursor, request.template ].pack("Cwwa*")
     else
-      contents = [command, recipient, values_mio ].pack("Cwa*")
+      contents = [ command, port, request.template ].pack("Cwa*")
     end
     enq_message command, contents, request
   end
 
 
-  def enq_cancel(recipient, request)
+  def enq_cancel(port, request)
     command = CANCEL_CMD
     mux_seqnum = @request_seqnum[request.object_id]
     if mux_seqnum
-      contents = [ command, recipient, mux_seqnum ].pack("Cww")
+      contents = [ command, port, mux_seqnum ].pack("Cww")
       enq_message command, contents, request
     else
       $log.notice "GlobalSpaceMux#enq_cancel: no mux_seqnum found for " +
@@ -627,52 +620,52 @@ class GlobalSpaceMux
 
   # Events from LocalSpace: Region proxy events -----------------------------
 
-  def write(recipient, tuple)
-    enq_write recipient, tuple
+  def write(port, tuple)
+    enq_write port, tuple
   end
 
-  def read(recipient, request)
-    enq_command READ_CMD, recipient, request
+  def read(port, request)
+    enq_command READ_CMD, port, request
   end
 
-  def readp(recipient, request)
-    enq_command READP_CMD, recipient, request
+  def readp(port, request)
+    enq_command READP_CMD, port, request
   end
 
-  def take(recipient, request)
-    enq_command TAKE_CMD, recipient, request
+  def take(port, request)
+    enq_command TAKE_CMD, port, request
   end
 
-  def takep(recipient, request)
-    enq_command TAKEP_CMD, recipient, request
+  def takep(port, request)
+    enq_command TAKEP_CMD, port, request
   end
 
-  def read_all(recipient, request, cursor=0)
-    enq_command READ_ALL_CMD, recipient, request, cursor
+  def read_all(port, request, cursor=0)
+    enq_command READ_ALL_CMD, port, request, cursor
   end
 
-  def take_all(recipient, request, cursor=0)
-    enq_command TAKE_ALL_CMD, recipient, request, cursor
+  def take_all(port, request, cursor=0)
+    enq_command TAKE_ALL_CMD, port, request, cursor
   end
 
-  def monitor(recipient, request, cursor=0)
-    enq_command MONITOR_CMD, recipient, request, cursor
+  def monitor(port, request, cursor=0)
+    enq_command MONITOR_CMD, port, request, cursor
   end
 
-  def consume(recipient, request, cursor=0)
-    enq_command CONSUME_CMD, recipient, request, cursor
+  def consume(port, request, cursor=0)
+    enq_command CONSUME_CMD, port, request, cursor
   end
 
-  def monitor_stream(recipient, request)
-    enq_command MONITOR_STREAM_CMD, recipient, request
+  def monitor_stream(port, request)
+    enq_command MONITOR_STREAM_CMD, port, request
   end
 
-  def consume_stream(recipient, request)
-    enq_command CONSUME_STREAM_CMD, recipient, request
+  def consume_stream(port, request)
+    enq_command CONSUME_STREAM_CMD, port, request
   end
 
-  def cancel(recipient, request)
-    enq_cancel recipient, request
+  def cancel(port, request)
+    enq_cancel port, request
   end
 
 end
