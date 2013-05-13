@@ -1,3 +1,13 @@
+version 0.15.0, 2013-05-13
+  * switched to storing MIO-encoded tuples/templates as C strings
+    directly in Judy arrays; this should fix the occasional segfaults
+    caused by a poor interaction between the Ruby garbage collector and
+    Judy arrays
+  * changed global/local servers to always use Judy arrays
+  * made changes to the internal API of the new Judy array wrapper
+  * fixed memory leak in Judy array wrapper
+  * migrated checkpoint tools from sqlite3-ruby to amalgalite
+
 version 0.14.0, 2013-03-31
   * directly incorporated Ruby Judy wrapper (formerly used rjudy gem)
   * Marinda::Client.new now takes a socket name and an optional specification
