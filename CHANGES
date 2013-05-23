@@ -1,3 +1,6 @@
+version 0.15.1, 2013-05-23
+  * fixed a Ruby 1.8.7 incompatibility at globalts.rb, line 1097
+
 version 0.15.0, 2013-05-13
   * switched to storing MIO-encoded tuples/templates as C strings
     directly in Judy arrays; this should fix the occasional segfaults

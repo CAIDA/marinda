@@ -1093,8 +1093,7 @@ class GlobalSpace
     if tuple
       response = TUPLE_RESP
       seqnum = tuple.seqnum
-      contents = [ response, command_seqnum, seqnum, tuple ]
-        .pack("Cwwa*")
+      contents = [ response, command_seqnum, seqnum, tuple ].pack("Cwwa*")
     else
       response = TUPLE_NIL_RESP
       contents = [ response, command_seqnum ].pack("Cw")
