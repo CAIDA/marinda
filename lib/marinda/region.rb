@@ -309,9 +309,9 @@ class Region
 
 
   def read(reqnum, template, channel)
-    tuple, index = find_match template
+    tuple, _ = find_match template
     if tuple
-      return nil, tuple
+      return nil, tuple, 0
     else
       request = RegionRequest.new @worker, @port, reqnum, :read,template,channel
       add_reading request
@@ -322,7 +322,7 @@ class Region
 
   def readp(reqnum, template, channel)
     tuple, _ = find_match template
-    return nil, tuple
+    return nil, tuple, 0
   end
 
 
@@ -330,7 +330,7 @@ class Region
     tuple, index = find_match template
     if tuple
       @tuples.clear_at index
-      return nil, tuple
+      return nil, tuple, 0
     else
       request = RegionRequest.new @worker, @port, reqnum, :take,template,channel
       add_consuming request
@@ -342,7 +342,7 @@ class Region
   def takep(reqnum, template, channel)
     tuple, index = find_match template
     @tuples.clear_at index if tuple
-    return nil, tuple
+    return nil, tuple, 0
   end
 
 

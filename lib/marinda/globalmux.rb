@@ -201,11 +201,12 @@ class GlobalSpaceMux
 
     when TUPLE_RESP
       command_seqnum, seqnum, values_mio = payload.unpack("wwa*")
-      return [command_seqnum, values_mio]
+      return [command_seqnum, values_mio, seqnum]
 
     when TUPLE_NIL_RESP
       retval = payload.unpack("w")  # command_seqnum
-      retval << nil
+      retval << nil  # nil tuple
+      retval << nil  # seqnum
       return retval
 
     when HEARTBEAT_RESP

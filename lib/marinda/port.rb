@@ -47,16 +47,16 @@ class Port
   MAX_PORT_NUMBER = 2**48 - 1
 
   def Port.local?(port)
-    port[1] == LOCAL
+    port[0] == LOCAL
   end
 
   def Port.global?(port)
-    port[1] == GLOBAL
+    port[0] == GLOBAL
   end
 
   def Port.make(scope, port_number)
     validate scope, port_number
-    (port_number << 1) | scope
+    return (port_number << 1) | scope
   end
 
   # Returns {port} if {port} is valid; otherwise returns nil.

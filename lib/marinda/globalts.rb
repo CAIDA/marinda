@@ -876,31 +876,31 @@ class GlobalSpace
 
     when READ_CMD, READP_CMD, TAKE_CMD, TAKEP_CMD
       port, template = arguments
-      request, tuple = region_singleton_operation REGION_METHOD[command],
-        port, template, context
-      handle_command_result context, command_seqnum, request, tuple
+      request, tuple, seqnum = region_singleton_operation port, command_seqnum,
+        REGION_METHOD[command], template, context
+      handle_command_result context, command_seqnum, request, tuple, seqnum
 
     when READ_ALL_CMD, TAKE_ALL_CMD, MONITOR_CMD, CONSUME_CMD
       port, template, cursor = arguments
-      request, tuple = region_iteration_operation REGION_METHOD[command],
-        port, template, context, cursor
-      handle_command_result context, command_seqnum, request, tuple
+      request, tuple, seqnum = region_iteration_operation port, command_seqnum,
+        REGION_METHOD[command], template, context, cursor
+      handle_command_result context, command_seqnum, request, tuple, seqnum
 
     when MONITOR_STREAM_CMD, CONSUME_STREAM_CMD
       port, template = arguments
 
       # First, set up the request in context.ongoing_requests.
-      request, tuple = region_stream_operation REGION_METHOD[command],
-        port, template, context
-      handle_command_result context, command_seqnum, request, tuple
+      request, tuple, seqnum = region_stream_operation port, command_seqnum,
+        REGION_METHOD[command], template, context
+      handle_command_result context, command_seqnum, request, tuple, seqnum
 
       # Stream over all existing matching tuples.
       #
       # This process is separated from the setup so that we can take
       # advantage of the existing mechanisms (e.g., GlobalSpace#region_result
       # callback) for satisfying blocking operations.
-      region_stream_operation REGION_STREAM_START_METHOD[command],
-        port, template, context
+      region_stream_operation port, command_seqnum,
+        REGION_STREAM_START_METHOD[command], template, context
 
     when CANCEL_CMD
       port, reqnum = arguments
@@ -1008,13 +1008,13 @@ class GlobalSpace
   end
 
 
-  def handle_command_result(context, reqnum, request, tuple)
+  def handle_command_result(context, reqnum, request, tuple, seqnum)
     if request
       $log.debug "adding ongoing_requests[%d] = %p",
         reqnum, request if $debug_commands
       context.ongoing_requests[reqnum] = request
     else
-      enq_tuple context, reqnum, tuple
+      enq_tuple context, reqnum, tuple, seqnum
     end
   end
 
@@ -1089,10 +1089,9 @@ class GlobalSpace
 
   #--------------------------------------------------------------------------
 
-  def enq_tuple(context, command_seqnum, tuple)
+  def enq_tuple(context, command_seqnum, tuple, seqnum)
     if tuple
       response = TUPLE_RESP
-      seqnum = tuple.seqnum
       contents = [ response, command_seqnum, seqnum, tuple ].pack("Cwwa*")
     else
       response = TUPLE_NIL_RESP
@@ -1148,19 +1147,20 @@ class GlobalSpace
   end
 
   # operation == :read, :readp, :take, :takep
-  def region_singleton_operation(operation, port, template, context)
-    find_region(port).__send__ operation, template, context
+  def region_singleton_operation(port, reqnum, operation, template, context)
+    find_region(port).__send__ operation, reqnum, template, context
   end
 
   # operation == :read_all, :take_all, :monitor, :consume
-  def region_iteration_operation(operation, port, template, context, cursor=0)
-    find_region(port).__send__ operation, template, context, cursor
+  def region_iteration_operation(port, reqnum, operation, template,
+                                 context, cursor=0)
+    find_region(port).__send__ operation, reqnum, template, context, cursor
   end
 
   # operation == :monitor_stream_setup, :consume_stream_setup,
   #              :monitor_stream_start, :consume_stream_start
-  def region_stream_operation(operation, port, template, context)
-    find_region(port).__send__ operation, template, context
+  def region_stream_operation(port, reqnum, operation, template, context)
+    find_region(port).__send__ operation, reqnum, template, context
   end
 
   def region_cancel(port, request)
@@ -1180,7 +1180,7 @@ class GlobalSpace
 
   # Events from Region ------------------------------------------------------
 
-  def region_result(port, context, reqnum, operation, template, tuple)
+  def region_result(port, context, reqnum, operation, template, tuple, seqnum)
     $log.debug "region_result(%p, reqnum=%d) = %p",
       operation, reqnum, tuple if $debug_commands
     request = context.ongoing_requests[reqnum]
@@ -1190,7 +1190,7 @@ class GlobalSpace
       unless operation == :monitor_stream || operation == :consume_stream
         context.ongoing_requests.delete reqnum
       end
-      enq_tuple context, request.reqnum, tuple
+      enq_tuple context, request.reqnum, tuple, seqnum
     end
   end
 
