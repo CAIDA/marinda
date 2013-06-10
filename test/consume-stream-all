@@ -18,7 +18,7 @@ Thread.abort_on_exception = true
 
 sock_path = "/tmp/localts-test.sock"
 $c = Marinda::Client.new sock_path, :scope => :local
-$g = Marinda::Client.new sock_path
+$g = Marinda::Client.new sock_path, :scope => :global
 $c = Marinda::VerboseClient.new $c, "c"
 $g = Marinda::VerboseClient.new $g, "g"
 

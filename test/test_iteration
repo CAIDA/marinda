@@ -50,8 +50,8 @@ end
 sock_path = "/tmp/localts-test.sock"
 $c1 = Marinda::Client.new sock_path, :port => $options.port, :scope => :local
 $c2 = Marinda::Client.new sock_path, :port => $options.port, :scope => :local
-$g1 = Marinda::Client.new sock_path, :port => $options.port
-$g2 = Marinda::Client.new sock_path, :port => $options.port
+$g1 = Marinda::Client.new sock_path, :port => $options.port, :scope => :global
+$g2 = Marinda::Client.new sock_path, :port => $options.port, :scope => :global
 
 $c1 = Marinda::VerboseClient.new $c1, "c1"
 $c2 = Marinda::VerboseClient.new $c2, "c2"
