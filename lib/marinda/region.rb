@@ -256,7 +256,7 @@ class Region
 
   def checkpoint_state(txn, checkpoint_id)
     txn.execute("INSERT INTO Regions VALUES(?, ?, ?, ?, ?)",
-                checkpoint_id, @port, @tuples.seqnum, @node_id, @session_id)
+                checkpoint_id, @port, @seqnum, @node_id, @session_id)
 
     checkpoint_tuples txn, checkpoint_id
     checkpoint_templates txn, checkpoint_id
