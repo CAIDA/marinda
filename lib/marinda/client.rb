@@ -727,8 +727,9 @@ class ClientEventLoop
     @sources = {}  # source => true
     @active_sources = {}  # fd => source
 
-    @deadline = nil  # timestamp
-    @deadline_callback = nil
+    @timer_repeat = 0.0 # secs
+    @timer_deadline = nil # timestamp; nil => no active timer
+    @timer_callback = nil # block
 
     # IO sets to pass to Kernel::select, and IO sets returned by
     # select.  We use instance variables so that it is easier to inspect
@@ -758,10 +759,29 @@ class ClientEventLoop
   end
 
 
-  def set_deadline(delay, &block)
+  def set_timer(timeout, &block)
+    raise "invalid timeout" unless timeout >= 0.0
     raise "missing block" unless block
-    @deadline = Time.now.to_f + delay.to_f
-    @deadline_callback = block
+    @timer_repeat = 0.0
+    @timer_deadline = Time.now.to_f + timeout
+    @timer_callback = block
+  end
+
+  alias_method :set_deadline, :set_timer # deprecated
+
+  def set_repeating_timer(timeout, &block)
+    raise "invalid timeout" unless timeout >= 0.0
+    raise "missing block" unless block
+    @timer_repeat = timeout
+    @timer_deadline = Time.now.to_f + timeout
+    @timer_callback = block
+  end
+
+
+  def clear_timer()
+    @timer_repeat = 0.0
+    @timer_deadline = nil
+    @timer_callback = nil
   end
 
 
@@ -800,28 +820,30 @@ class ClientEventLoop
           @read_set.length, @read_set
         $stdout.printf "  select write_set (%d fds): %p\n",
           @write_set.length,@write_set
-        if @deadline
-          $stdout.printf "  deadline at %p (%s)\n", @deadline,
-            Time.at(@deadline)
+
+        if @timer_deadline
+          $stdout.printf "  timer_deadline at %p (%s), repeat in %0.3f secs\n",
+            @timer_deadline, Time.at(@timer_deadline), @timer_repeat
         else
-          $stdout.printf "  no deadline.\n"
+          $stdout.printf "  timer inactive.\n"
         end
       end
 
-      if !@deadline && @read_set.empty? && @write_set.empty?
+      if !@timer_deadline && @read_set.empty? && @write_set.empty?
         @running = false
         break 
       end
 
-      timeout = nil
-      if @deadline
-        timeout = @deadline - Time.now.to_f
+      if @timer_deadline
+        timeout = @timer_deadline - Time.now.to_f
         timeout = 0 if timeout <= 0.0
         # Note: Don't execute the timeout callback here, before the select,
         #       since we want the next select() call to take into account
         #       any changes to the deadline made by the callback, and the
         #       simplest way to ensure this is to execute the callback after
         #       the select().
+      else
+        timeout = nil
       end
 
       # XXX select can throw "closed stream (IOError)" if a write file
@@ -834,15 +856,24 @@ class ClientEventLoop
           (@readable ? @readable.length : 0), (@writable ? @writable.length : 0)
       end
 
-      # Note: Execute the callback here before processing the ready
-      #       descriptors so that @deadline and @deadline_callback don't
-      #       get clobbered in subtle ways by read_data()/write_data()
-      #       and the deadline callback.  It's more predictable for the
-      #       deadline callback to execute first, since the @deadline...
-      #       variables currently hold the state of the expired deadline.
+      # Note: Execute the timer callback here before processing the ready
+      #       descriptors so that there is a predictable order to any timer
+      #       changes made by both the timer callback and the callbacks for
+      #       read_data() and write_data() in a given select() call pass.
+      #       It's somewhat more natural for the timer callback to execute
+      #       first, since the timer variables (e.g., @timer_deadline) will
+      #       hold the exact values that triggered the timeout (rather than
+      #       values possibly updated by the read_data() and write_data()
+      #       callbacks).
       if timeout == 0 || (timeout && !@readable && !@writable)
-        callback = @deadline_callback
-        @deadline = @deadline_callback = nil
+        # Adjust the timer now before executing the callback, so that we won't
+        # clobber any timer changes made by the callback.
+        callback = @timer_callback
+        if @timer_repeat > 0.0
+          @timer_deadline = Time.now.to_f + @timer_repeat
+        else
+          @timer_deadline = @timer_callback = nil
+        end
         callback.call()
       end
 
@@ -865,6 +896,58 @@ class ClientEventLoop
 
   def suspend
     @running = false
+  end
+
+
+  #--------------------------------------------------------------------------
+
+  def self.test_timers
+    loop = ClientEventLoop.new
+    loop.set_timer 1.0 do
+      puts "A: set_timer 1.0 expired"
+    end
+    loop.start()
+    puts "A passed"
+
+    n = 0
+    loop.set_repeating_timer 1.0 do
+      n += 1
+      printf "B: set_repeating_timer 1.0 expired; %d/3\n", n
+      loop.clear_timer() if n >= 3
+    end
+    loop.start()
+    puts "B passed"
+
+    n = 0
+    loop.set_repeating_timer 1.0 do
+      n += 1
+      printf "C: set_repeating_timer 1.0 expired; %d/2\n", n
+      if n >= 2
+        loop.set_timer 1.0 do
+          puts "C: set_timer 1.0 expired"
+        end
+      end
+    end
+    loop.start()
+    puts "C passed"
+
+    loop.set_timer 1.0 do
+      puts "D: set_timer 1.0 expired"
+      n = 0
+      loop.set_repeating_timer 1.0 do
+        n += 1
+        printf "D: set_repeating_timer 1.0 expired; %d/2\n", n
+        if n >= 2
+          loop.set_timer 1.5 do
+            puts "D: set_timer 1.5 expired"
+          end
+        end
+      end
+    end
+    loop.start()
+    puts "D passed"
+
+    exit 0
   end
 
 end
