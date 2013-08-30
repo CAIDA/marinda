@@ -1,3 +1,7 @@
+version 0.15.4, 2013-08-30
+  * fixed missing embedded code samples in docs/client-programming.html and
+    docs/advanced-programming.html
+
 version 0.15.3, 2013-08-14
   * added support for repeating timers to Marinda::ClientEventLoop
     (#set_deadline is now deprecated; use #set_timer)
