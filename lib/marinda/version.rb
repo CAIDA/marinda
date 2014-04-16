@@ -3,7 +3,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007-2013 The Regents of the University of California.
+## Copyright (C) 2007-2014 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -23,6 +23,6 @@
 
 module Marinda
 
-  VERSION = "0.15.4"
+  VERSION = "0.15.5"
 
 end  # module Marinda

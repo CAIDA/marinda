@@ -1,3 +1,6 @@
+version 0.15.5, 2014-04-15
+  * implemented temporary workaround for bug in Region#restore_templates
+
 version 0.15.4, 2013-08-30
   * fixed missing embedded code samples in docs/client-programming.html and
     docs/advanced-programming.html
