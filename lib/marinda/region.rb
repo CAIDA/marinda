@@ -6,7 +6,7 @@
 ##
 ## --------------------------------------------------------------------------
 ## Author: Young Hyun
-## Copyright (C) 2007-2013 The Regents of the University of California.
+## Copyright (C) 2007-2014 The Regents of the University of California.
 ## 
 ## This file is part of Marinda.
 ## 
@@ -222,11 +222,12 @@ class Region
   # The {sessions} argument should map session_id to a Context object restored
   # in GlobalSpace.
   def restore_templates(state, checkpoint_id, sessions)
-    state.db.execute("SELECT session_id,operation,template FROM RegionTemplates
+    state.db.execute("SELECT seqnum,session_id,operation,template
+                       FROM RegionTemplates
                        WHERE checkpoint_id=? AND port=?
                        ORDER BY seqnum",
                       checkpoint_id, @port) do |row|
-      session_id, operation_str, template = row
+      seqnum, session_id, operation_str, template = row
       operation = operation_str.to_sym
       context = sessions[session_id]
       unless context
@@ -235,7 +236,8 @@ class Region
         exit 1
       end
 
-      request = RegionRequest.new @worker, @port, operation, template, context
+      request = RegionRequest.new @worker, @port,
+        seqnum, operation, template, context
       case operation
       when :read, :read_all, :monitor, :monitor_stream
         @read_requests << request
