@@ -312,10 +312,11 @@ encode_bignum(mio_data_t *data, size_t index, VALUE value)
 static size_t
 encode_float(mio_data_t *data, size_t index, VALUE value)
 {
+  double value_d = RFLOAT_VALUE(value);
 #ifdef MIO_BIG_ENDIAN
-  const unsigned char *d = (unsigned char *)&(RFLOAT_VALUE(value));
+  const unsigned char *d = (unsigned char *)&value_d;
 #elif defined(MIO_LITTLE_ENDIAN)
-  const unsigned char *dle = (unsigned char *)&(RFLOAT_VALUE(value));
+  const unsigned char *dle = (unsigned char *)&value_d;
   const unsigned char *dlep = dle + 7;
   unsigned char d[8], *dp = d;
 
