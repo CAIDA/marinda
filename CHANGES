@@ -1,3 +1,6 @@
+version 0.15.6, 2014-07-16
+  * fixed Ruby 2.1.2 incompatibility with RFLOAT_VALUE
+
 version 0.15.5, 2014-04-15
   * implemented temporary workaround for bug in Region#restore_templates
 
