@@ -27,10 +27,18 @@ require 'optparse'
 
 require 'amalgalite'
 
+require 'mioext'
+
 $options = OpenStruct.new
 $options.root_dir = "."
 
 opts = OptionParser.new
+
+opts.on("--decode", TrueClass,
+        "decode tuples and templates (default: false)") do |v|
+  $options.decode = v
+end
+
 opts.on("--root", "=DIR",
 	"Marinda root dir (default: #{$options.root_dir})") do |v|
   $options.root_dir = v
@@ -111,6 +119,9 @@ def open_state_database(path, &block)
 end
 
 
+# Columns with tuple/template values encoded with MIO.
+ENCODED_COLUMNS = ["tuple", "template"]
+
 def show_checkpoint(db, checkpoint_id)
   timestamp = db.first_value_from "SELECT timestamp FROM ChangeLog
                                    WHERE id=?
@@ -143,6 +154,10 @@ def show_checkpoint(db, checkpoint_id)
         if column.declared_data_type == "TEXT"
           indent = " " * (name.length + 2)
           puts row[name].gsub(/\n/, "\n" + indent)
+          if $options.decode && ENCODED_COLUMNS.include?(name)
+            tuple = MIO.decode row[name]
+            printf "%s: %p\n", name, tuple
+          end
         else
           puts row[name].to_s
         end
