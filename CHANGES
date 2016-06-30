@@ -1,3 +1,8 @@
+version 0.15.7, 2016-06-30
+  * marinda-gs, marinda-ls: changed to use StderrLogger instead of Syslog
+  * marinda-ls: added handler for SIGUSR1 to prevent death by accidental
+    sending of this signal to marinda-ls instead of marinda-gs
+
 version 0.15.6, 2014-07-16
   * fixed Ruby 2.1.2 incompatibility with RFLOAT_VALUE
 
