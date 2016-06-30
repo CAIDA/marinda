@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
 require 'rubygems'
+require 'rubygems/package'
 require 'fileutils'
 
 load 'lib/marinda/version.rb'
@@ -27,8 +28,9 @@ end
 spec = Gem::Specification.new do |s|
   s.name      = "marinda"
   s.version   = MY_VERSION
+  s.licenses  = ["GPL-3.0"]
   s.author    = "Young Hyun"
-  s.email     = "youngh@rubyforge.org"
+  s.email     = "youngh@caida.org"
   s.homepage  = "http://www.caida.org"
   s.platform  = Gem::Platform::RUBY
   s.summary   = "Distributed tuple space"
@@ -66,7 +68,8 @@ if $0 == __FILE__
   puts
   gem_name = "marinda-#{MY_VERSION}.gem"
   File.delete gem_name if File.exists? gem_name
-  Gem::Builder.new(spec).build
+  #Gem::Builder.new(spec).build
+  Gem::Package.build(spec)
 
   tar_dir = "marinda-#{MY_VERSION}"
   puts "\nBuilding dist directory " + tar_dir

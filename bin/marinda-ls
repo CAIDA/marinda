@@ -35,6 +35,7 @@ require 'syslog'
 require 'socket'
 require 'yaml'
 
+require 'arkutil/logging'
 require 'eva'  # also provides OpenSSL on Ruby < 1.9.2
 require 'marinda/utils'
 require 'marinda/config'
@@ -63,6 +64,11 @@ end
 opts.on("-d", "--[no-]detach", TrueClass,
 	"run as detached (daemon) process") do |v|
   $options.detach = v
+end
+
+opts.on("--syslog", TrueClass,
+        "use Syslog instead of StderrLogger") do |v|
+  $options.syslog = v
 end
 
 opts.on("-v", "--[no-]verbose", TrueClass,  "show detailed progress") do |v|
@@ -99,14 +105,22 @@ $options.lock_file = $options.root_dir + "/localserver.LOCK"
 
 #===========================================================================
 
-syslog_options = Syslog::LOG_PID
-syslog_options |= Syslog::LOG_PERROR unless $options.detach
-$log = Syslog.open($0, syslog_options, Syslog::LOG_LOCAL0)
-Syslog.mask = Syslog::LOG_UPTO(Syslog::LOG_DEBUG) if $options.verbose
+if $options.syslog
+  syslog_options = Syslog::LOG_PID
+  syslog_options |= Syslog::LOG_PERROR unless $options.detach
+  $log = Syslog.open($0, syslog_options, Syslog::LOG_LOCAL0)
+  Syslog.mask = Syslog::LOG_UPTO(Syslog::LOG_DEBUG) if $options.verbose
+else
+  $log = ArkUtil::StderrLogger.new
+end
 
 def shutdown_cleanly
   File.unlink $opened_server_socket if $opened_server_socket
   Marinda.release_exclusive_lock $lock_handle if $lock_handle
+end
+
+Signal.trap("USR1") do
+  $log.info "got SIGUSR1; NOTE: marinda-ls doesn't support checkpointing"
 end
 
 Signal.trap("TERM") do
