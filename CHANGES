@@ -1,3 +1,8 @@
+version 0.15.100 2017-08-25 (simple_client_cert branch)
+  * changed to use the CN in client cert lookup the node ID;
+    The common name is no longer checked against the source address
+    of the client connection.
+
 version 0.15.7, 2016-06-30
   * marinda-gs, marinda-ls: changed to use StderrLogger instead of Syslog
   * marinda-ls: added handler for SIGUSR1 to prevent death by accidental

@@ -112,8 +112,19 @@ class GlobalSpaceEventLoop
 
   # Eva callback for @server_connection becoming readable.
   def handle_incoming_connection(watcher)
-    client_sock, peer_ip, node_id =
-      @server_connection.accept_with_whitelist @config.nodes
+    if @config.check_client_name
+      client_sock, peer_ip, node_id =
+        @server_connection.accept_with_whitelist @config.nodes
+    else
+      client_sock = @server_connection.accept()
+
+      # Note: peeraddr() can raise Errno::EINVAL if the remote end closes
+      #       the socket (see getpeername(2)).
+      peer_ip = client_sock.peeraddr[3] rescue "0.0.0.0"
+
+      # XXX BUG the correct node_id won't be found when not using SSL
+      node_id = 0  # dummy value; will find true node_id later
+    end
 
     if client_sock
       if @config.use_ssl && peer_ip != "127.0.0.1"
@@ -132,7 +143,7 @@ class GlobalSpaceEventLoop
   def handle_ssl_accept(watcher)
     begin
       accepting_connection = watcher.user_data
-      ssl, node_id = accepting_connection.accept
+      ssl, node_id = accepting_connection.accept @config.nodes
 
       # By this point, either the accept succeeded, or we got an error like
       # a post connection failure.  In either case, we'll never need to try

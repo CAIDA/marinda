@@ -478,7 +478,7 @@ class AcceptingSSLConnection
 
   # This passes out IO::WaitReadable or IO::WaitWritable if
   # SSLSocket#accept_nonblock would block.
-  def accept
+  def accept(nodes)
     begin
       unless @ssl
         @ssl = OpenSSL::SSL::SSLSocket.new @client_sock, @@context
@@ -489,7 +489,16 @@ class AcceptingSSLConnection
       @ssl.extend ConnectionState
       @ssl.__connection_state = :connected
       @ssl.__connection = nil  # will be set later by caller
-      @ssl.post_connection_check @peer_ip if @@check_client_name
+      if @@check_client_name
+        @ssl.post_connection_check @peer_ip
+      else
+        common_name = get_common_name @ssl
+        printf "client cert common name: %p\n", common_name
+
+        @node_id = nodes[common_name] || 0
+        $log.info "accepting SSL connection from %s, node %d",
+                  @peer_ip, @node_id
+      end
       return @ssl, @node_id
 
     # not sure Errno::EINTR is possible with SSLSocket#accept_nonblock
@@ -513,6 +522,14 @@ class AcceptingSSLConnection
       @client_sock.__connection_state = :defunct
       return nil
     end
+  end
+
+
+  def get_common_name(ssl)
+    ssl.peer_cert.subject.to_a.each do |oid, value|
+      return value if oid == "CN"
+    end
+    return nil
   end
 
 end
