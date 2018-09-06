@@ -23,6 +23,6 @@
 
 module Marinda
 
-  VERSION = "0.15.100"
+  VERSION = "0.15.200"
 
 end  # module Marinda

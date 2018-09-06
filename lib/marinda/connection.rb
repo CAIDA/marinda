@@ -129,19 +129,11 @@ module SSLSupport
     retval.ca_file = ca_file if ca_file
     retval.ca_path = ca_path if ca_path
 
-    # NOTE: The inclusion of OP_NO_TLSv1 is a (non-ideal) workaround for
-    #       some bug in OpenSSL.  This option should be removed when the
-    #       bug is finally squashed.  In short, without this option,
-    #       connections to and from localhost fail with
-    #
-    #  client: OpenSSL::SSL::SSLError: sslv3 alert bad record mac
-    #  server: OpenSSL::SSL::SSLError: decryption failed or bad record mac
-    #
-    #       Remote connections still work without this option, however.
-    #       The issue seems to be related to OP_TLS_ROLLBACK_BUG
-    #       (see SSL_CTX_set_options(3)), but using this option doesn't help.
-    #       See also http://marc.theaimsgroup.com/?l=openssl-dev&m=108444932120941&w=2
-    retval.options = OpenSSL::SSL::OP_NO_SSLv2 | OpenSSL::SSL::OP_NO_TLSv1
+    # 2018-09-05: openssl 1.1 deprecates OP_NO_SSLv2; in fact, setting it here
+    #             will cause client connections to fail with "version too low"
+    #             error.
+    retval.options = OpenSSL::SSL::OP_NO_SSLv3 | OpenSSL::SSL::OP_NO_TLSv1 \
+                     | OpenSSL::SSL::OP_NO_TLSv1_1
     retval
   end
 

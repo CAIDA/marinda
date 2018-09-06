@@ -42,7 +42,6 @@ EOF
   s.extensions = ["ext/extconf.rb"]
   #s.rubyforge_project = "marinda"
   #s.test_file = "test/ts_marinda.rb"
-  s.has_rdoc  = false
   s.extra_rdoc_files = MY_EXTRA_FILES
 
   s.executables = ["marinda-gs", "marinda-ls", "migrate-checkpoints",

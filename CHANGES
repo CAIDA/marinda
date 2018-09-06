@@ -1,3 +1,10 @@
+version 0.15.200 2018-09-05 (simple_client_cert branch)
+  * changed SSL connection options: 1) removed OpenSSL::SSL::OP_NO_SSLv2,
+    since openssl 1.1 deprecates this and setting it now will cause client
+    connections to fail with "version too low" error, and 2) added
+    OpenSSL::SSL::OP_NO_TLSv1_1; now only TLS1.2 is allowed
+    (no SSLv1/v2/v3 or TLS1/TLS1.1)
+
 version 0.15.100 2017-08-25 (simple_client_cert branch)
   * changed to use the CN in client cert lookup the node ID;
     The common name is no longer checked against the source address
